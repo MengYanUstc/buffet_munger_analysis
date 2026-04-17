@@ -139,3 +139,29 @@ class DataFetcher:
         except Exception as e:
             print(f"[DataFetcher] 获取资产负债表数据失败 ({stock_code}): {e}")
             return pd.DataFrame()
+
+    def fetch_gross_margin_data(self, stock_code: str) -> pd.DataFrame:
+        """
+        获取近5年毛利率数据。
+        从 stock_financial_analysis_indicator_em 提取 MLR（毛利）和 TOTALOPERATEREVE（营业总收入）。
+        """
+        if self.source != 'akshare':
+            raise NotImplementedError(f"暂不支持数据源: {self.source}")
+
+        try:
+            symbol = self._format_symbol_indicator(stock_code)
+            df = ak.stock_financial_analysis_indicator_em(symbol=symbol)
+            df = self._normalize_date_col(df, 'REPORT_DATE')
+            df = self._filter_annual(df, 'REPORT_DATE')
+
+            for col in ['MLR', 'TOTALOPERATEREVE']:
+                if col in df.columns:
+                    df[col] = self._to_numeric(df[col])
+
+            if 'MLR' in df.columns and 'TOTALOPERATEREVE' in df.columns:
+                df['毛利率'] = (df['MLR'] / df['TOTALOPERATEREVE']) * 100.0
+
+            return df.tail(7)
+        except Exception as e:
+            print(f"[DataFetcher] 获取毛利率数据失败 ({stock_code}): {e}")
+            return pd.DataFrame()
