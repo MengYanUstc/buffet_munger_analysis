@@ -10,6 +10,7 @@ from typing import Dict, Any
 from ..core import AnalyzerBase, AnalysisReport
 from ..quality_scoring.coze_client import CozeLLMClient
 from ..data_fetcher import DataFetcher
+from ..data_warehouse.collector import DataCollector
 from .capex_scorer import compute_capex_score
 
 
@@ -22,6 +23,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         self.industry_type = industry_type
         self.source = source
         self.fetcher = DataFetcher(source=source)
+        self.collector = DataCollector()
 
     def run(self) -> AnalysisReport:
         # 1. 调用 Coze LLM 获取定性评分 + 行业分类/发展阶段
@@ -31,7 +33,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         industry_classification = llm_result.get("industry_classification", "medium")
         growth_stage = llm_result.get("growth_stage", "mature")
 
-        # 3. 代码计算资本开支定量评分（10分）
+        # 3. 代码计算资本开支定量评分（4分）——优先从数据库读取
         capex_result = self._compute_capex_quantitative(industry_classification, growth_stage)
 
         # 4. 构建维度
@@ -51,13 +53,16 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "reason": quality.get("reason", ""),
         }
 
-        # 定量维度：资本开支
+        # 定量维度：资本开支（满分 4 分）
         if capex_result.get("final_score") is not None:
             dimensions["capex_efficiency"] = {
                 "score": capex_result["final_score"],
-                "max_score": 10.0,
+                "max_score": 4.0,
                 "base_score": capex_result["base_score"],
                 "stability_adjustment": capex_result["stability_adjustment"],
+                "industry_adjustment": capex_result["industry_adjustment"],
+                "growth_stage_adjustment": capex_result["growth_stage_adjustment"],
+                "raw_score": capex_result["raw_score"],
                 "avg_capex_ratio": capex_result["avg_capex_ratio"],
                 "industry_type": capex_result["industry_type"],
                 "growth_stage": capex_result["growth_stage"],
@@ -66,7 +71,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         else:
             dimensions["capex_efficiency"] = {
                 "score": 0.0,
-                "max_score": 10.0,
+                "max_score": 4.0,
                 "reason": capex_result.get("reason", "资本开支数据不足"),
             }
 
@@ -84,9 +89,9 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "qualitative_score": round(qualitative_total, 1),
             "qualitative_max": 10.0,
             "quantitative_score": quantitative_total,
-            "quantitative_max": 10.0,
+            "quantitative_max": 4.0,
             "total_score": total_score,
-            "max_score": 20.0,
+            "max_score": 14.0,
             "rating": rating,
         }
 
@@ -108,7 +113,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             module_name=self.module_name,
             stock_code=self.stock_code,
             total_score=total_score,
-            max_score=20.0,
+            max_score=14.0,
             rating=rating,
             dimensions=dimensions,
             summary=summary,
@@ -139,24 +144,38 @@ class BusinessModelAnalyzer(AnalyzerBase):
     def _compute_capex_quantitative(
         self, industry_classification: str, growth_stage: str
     ) -> Dict[str, Any]:
-        """代码计算资本开支定量评分。"""
+        """
+        代码计算资本开支定量评分（4分）。
+        优先从数据库 financial_reports 表读取 capex 和 parent_net_profit，
+        若数据库缺失则 fallback 到网络获取。
+        """
         try:
-            df = self.fetcher.fetch_capex_and_profit_data(self.stock_code)
-            if df.empty or "资本开支" not in df.columns or "PARENTNETPROFIT" not in df.columns:
-                return {"final_score": None, "reason": "资本开支或净利润数据缺失"}
-
-            capex_values = df["资本开支"].dropna().tolist()
-            profit_values = df["PARENTNETPROFIT"].dropna().tolist()
+            # 优先从数据库读取（缓存优先策略）
+            df = self.collector.cache.read_financial_reports(self.stock_code)
+            if not df.empty and "capex" in df.columns and "parent_net_profit" in df.columns:
+                capex_values = df["capex"].dropna().tolist()
+                profit_values = df["parent_net_profit"].dropna().tolist()
+                source_note = "数据来源：SQLite 缓存"
+            else:
+                # fallback：从网络获取
+                df = self.fetcher.fetch_capex_and_profit_data(self.stock_code)
+                if df.empty or "资本开支" not in df.columns or "PARENTNETPROFIT" not in df.columns:
+                    return {"final_score": None, "reason": "资本开支或净利润数据缺失"}
+                capex_values = df["资本开支"].dropna().tolist()
+                profit_values = df["PARENTNETPROFIT"].dropna().tolist()
+                source_note = "数据来源：akshare 实时获取"
 
             if len(capex_values) == 0 or len(profit_values) == 0:
                 return {"final_score": None, "reason": "资本开支或净利润数据为空"}
 
-            return compute_capex_score(
+            result = compute_capex_score(
                 capex_values=capex_values,
                 net_profit_values=profit_values,
                 industry_type=industry_classification,
                 growth_stage=growth_stage,
             )
+            result["source_note"] = source_note
+            return result
         except Exception as e:
             print(f"[BusinessModelAnalyzer] 资本开支计算失败: {e}")
             return {"final_score": None, "reason": str(e)}
@@ -277,11 +296,12 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
     @staticmethod
     def _rating(total: float) -> str:
-        if total >= 17.0:
+        # 总分 14 分 = 定性 10 + 定量 4
+        if total >= 12.0:
             return "优秀"
-        elif total >= 13.0:
+        elif total >= 9.5:
             return "良好"
-        elif total >= 9.0:
+        elif total >= 6.5:
             return "中等"
         else:
             return "较差"
