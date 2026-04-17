@@ -1,7 +1,6 @@
 """
 商业模式分析主模块（Module 4）
-定性部分 10 分 = 收入稳定性(5分) + 商业模式质量(5分)
-全部由 Coze LLM 基于公开信息独立判断。
+总分 20 分 = 定性 10 分（Coze LLM）+ 定量 10 分（资本开支代码计算）
 """
 
 import json
@@ -10,21 +9,8 @@ from typing import Dict, Any
 
 from ..core import AnalyzerBase, AnalysisReport
 from ..quality_scoring.coze_client import CozeLLMClient
-
-
-# 行业分类与发展阶段定义（用于 Prompt 中指导 LLM）
-INDUSTRY_TYPES = {
-    "light": "轻资产（软件、互联网、金融、咨询、白酒）",
-    "medium": "中等资产（消费品、零售、医药）",
-    "heavy": "重资产（制造业、公用事业、能源、交通）",
-}
-
-GROWTH_STAGES = {
-    "startup": "初创期",
-    "growth": "成长期",
-    "mature": "成熟期",
-    "decline": "衰退期",
-}
+from ..data_fetcher import DataFetcher
+from .capex_scorer import compute_capex_score
 
 
 class BusinessModelAnalyzer(AnalyzerBase):
@@ -34,16 +20,26 @@ class BusinessModelAnalyzer(AnalyzerBase):
     def __init__(self, stock_code: str, industry_type: str = "general", source: str = "akshare"):
         self.stock_code = stock_code
         self.industry_type = industry_type
+        self.source = source
+        self.fetcher = DataFetcher(source=source)
 
     def run(self) -> AnalysisReport:
-        # 调用 Coze LLM 进行纯定性分析
+        # 1. 调用 Coze LLM 获取定性评分 + 行业分类/发展阶段
         llm_result = self._call_llm_qualitative()
 
-        # 构建维度
+        # 2. 获取 LLM 判断的行业分类与发展阶段
+        industry_classification = llm_result.get("industry_classification", "medium")
+        growth_stage = llm_result.get("growth_stage", "mature")
+
+        # 3. 代码计算资本开支定量评分（10分）
+        capex_result = self._compute_capex_quantitative(industry_classification, growth_stage)
+
+        # 4. 构建维度
         dimensions = {}
+
+        # 定性维度
         stability = llm_result.get("income_stability", {})
         quality = llm_result.get("business_model_quality", {})
-
         dimensions["income_stability"] = {
             "score": stability.get("score", 0.0),
             "max_score": 5.0,
@@ -55,31 +51,56 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "reason": quality.get("reason", ""),
         }
 
-        total_score = round(
-            dimensions["income_stability"]["score"] + dimensions["business_model_quality"]["score"],
-            1,
+        # 定量维度：资本开支
+        if capex_result.get("final_score") is not None:
+            dimensions["capex_efficiency"] = {
+                "score": capex_result["final_score"],
+                "max_score": 10.0,
+                "base_score": capex_result["base_score"],
+                "stability_adjustment": capex_result["stability_adjustment"],
+                "avg_capex_ratio": capex_result["avg_capex_ratio"],
+                "industry_type": capex_result["industry_type"],
+                "growth_stage": capex_result["growth_stage"],
+                "reason": capex_result["reason"],
+            }
+        else:
+            dimensions["capex_efficiency"] = {
+                "score": 0.0,
+                "max_score": 10.0,
+                "reason": capex_result.get("reason", "资本开支数据不足"),
+            }
+
+        # 5. 汇总
+        qualitative_total = (
+            dimensions["income_stability"]["score"]
+            + dimensions["business_model_quality"]["score"]
         )
+        quantitative_total = dimensions["capex_efficiency"]["score"]
+        total_score = round(qualitative_total + quantitative_total, 1)
 
         rating = self._rating(total_score)
 
         summary = {
-            "income_stability_score": dimensions["income_stability"]["score"],
-            "business_model_quality_score": dimensions["business_model_quality"]["score"],
+            "qualitative_score": round(qualitative_total, 1),
+            "qualitative_max": 10.0,
+            "quantitative_score": quantitative_total,
+            "quantitative_max": 10.0,
             "total_score": total_score,
-            "max_score": 10.0,
+            "max_score": 20.0,
             "rating": rating,
         }
 
-        # 额外信息：行业分类与发展阶段
+        # 额外信息
         extra_info = {
-            "industry_classification": llm_result.get("industry_classification", ""),
-            "growth_stage": llm_result.get("growth_stage", ""),
+            "industry_classification": industry_classification,
+            "growth_stage": growth_stage,
             "business_model_description": llm_result.get("business_model_description", ""),
         }
 
         raw_data = {
             "llm_raw": llm_result.get("_raw_text", ""),
             "extra_info": extra_info,
+            "capex_detail": capex_result.get("yearly_scores", []),
         }
 
         return AnalysisReport(
@@ -87,7 +108,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             module_name=self.module_name,
             stock_code=self.stock_code,
             total_score=total_score,
-            max_score=10.0,
+            max_score=20.0,
             rating=rating,
             dimensions=dimensions,
             summary=summary,
@@ -114,6 +135,31 @@ class BusinessModelAnalyzer(AnalyzerBase):
         except Exception as e:
             print(f"[BusinessModelAnalyzer] Coze LLM 调用失败: {e}")
             return self._empty_result(str(e))
+
+    def _compute_capex_quantitative(
+        self, industry_classification: str, growth_stage: str
+    ) -> Dict[str, Any]:
+        """代码计算资本开支定量评分。"""
+        try:
+            df = self.fetcher.fetch_capex_and_profit_data(self.stock_code)
+            if df.empty or "资本开支" not in df.columns or "PARENTNETPROFIT" not in df.columns:
+                return {"final_score": None, "reason": "资本开支或净利润数据缺失"}
+
+            capex_values = df["资本开支"].dropna().tolist()
+            profit_values = df["PARENTNETPROFIT"].dropna().tolist()
+
+            if len(capex_values) == 0 or len(profit_values) == 0:
+                return {"final_score": None, "reason": "资本开支或净利润数据为空"}
+
+            return compute_capex_score(
+                capex_values=capex_values,
+                net_profit_values=profit_values,
+                industry_type=industry_classification,
+                growth_stage=growth_stage,
+            )
+        except Exception as e:
+            print(f"[BusinessModelAnalyzer] 资本开支计算失败: {e}")
+            return {"final_score": None, "reason": str(e)}
 
     def _build_prompt(self) -> str:
         """构建商业模式定性分析 Prompt。"""
@@ -166,7 +212,6 @@ class BusinessModelAnalyzer(AnalyzerBase):
 - **5分**：客户高度分散、产品多元化、无周期性、高复购率
 - **3分**：客户较集中或产品单一或有一定周期性
 - **1分**：大客户依赖严重、产品单一、强周期性、客户粘性低
-- 中间分数根据实际情况插值
 
 ### 2. 商业模式质量评估（满分 5 分）
 
@@ -180,7 +225,6 @@ class BusinessModelAnalyzer(AnalyzerBase):
 - **5分**：赚钱逻辑清晰+盈利强、难以复制、强规模效应、抗风险能力强
 - **3分**：赚钱逻辑清晰但盈利一般，或规模效应不明显，或有一定风险
 - **1分**：赚钱逻辑不清晰、盈利困难、抗风险能力弱
-- 中间分数根据实际情况插值
 
 ---
 
@@ -223,8 +267,8 @@ class BusinessModelAnalyzer(AnalyzerBase):
     @staticmethod
     def _empty_result(reason: str) -> Dict[str, Any]:
         return {
-            "industry_classification": "",
-            "growth_stage": "",
+            "industry_classification": "medium",
+            "growth_stage": "mature",
             "business_model_description": f"LLM 调用失败: {reason}",
             "income_stability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "business_model_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
@@ -233,11 +277,11 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
     @staticmethod
     def _rating(total: float) -> str:
-        if total >= 8.5:
+        if total >= 17.0:
             return "优秀"
-        elif total >= 6.5:
+        elif total >= 13.0:
             return "良好"
-        elif total >= 4.5:
+        elif total >= 9.0:
             return "中等"
         else:
             return "较差"
