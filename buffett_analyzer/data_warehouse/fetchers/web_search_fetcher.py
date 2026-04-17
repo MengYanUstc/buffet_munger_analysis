@@ -6,9 +6,14 @@ Web 搜索补缺模块
 
 import re
 import time
+import warnings
 from typing import Dict, Any, List, Optional
 import requests
 from bs4 import BeautifulSoup
+
+# 抑制 duckduckgo_search 包重命名警告
+warnings.filterwarnings("ignore", message="This package.*has been renamed to.*ddgs", category=RuntimeWarning)
+
 try:
     from ddgs import DDGS
 except ImportError:

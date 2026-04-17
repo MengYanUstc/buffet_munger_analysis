@@ -132,6 +132,10 @@ class QualityAnalyzer(AnalyzerBase):
         if roe_stab_res:
             roe_stability_output["ai_score"] = roe_stab_res.score
             roe_stability_output["ai_reason"] = roe_stab_res.reason
+            # 统一暴露 score 字段，方便前端/报表直接读取
+            roe_stability_output["score"] = roe_stab_res.score
+        else:
+            roe_stability_output["score"] = roe_stability_output.get("penalty_score", 0.0)
 
         debt_analysis_output = {}
         if debt_ratio is not None:
@@ -139,6 +143,10 @@ class QualityAnalyzer(AnalyzerBase):
         if debt_res:
             debt_analysis_output["ai_score"] = debt_res.score
             debt_analysis_output["ai_reason"] = debt_res.reason
+            # 统一暴露 score 字段，方便前端/报表直接读取
+            debt_analysis_output["score"] = debt_res.score
+        else:
+            debt_analysis_output["score"] = debt_analysis_output.get("suggested_base_score", 0.0)
 
         dimensions = {
             "roe": {

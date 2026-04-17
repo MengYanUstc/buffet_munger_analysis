@@ -192,8 +192,8 @@ class AkshareDividendFetcher(AkshareBaseFetcher):
                 df = func(symbol=stock_code)
                 if df is not None and not df.empty:
                     break
-            except Exception as e:
-                print(f"[AkshareDividendFetcher] {func_name} 失败: {e}")
+            except Exception:
+                # 静默失败：akshare版本差异导致API可能不存在
                 continue
 
         if df is None or df.empty:

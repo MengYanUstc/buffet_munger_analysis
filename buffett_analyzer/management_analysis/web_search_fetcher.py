@@ -5,7 +5,11 @@
 """
 
 import time
+import warnings
 from typing import Dict, Any, List
+
+# 抑制 duckduckgo_search 包重命名警告
+warnings.filterwarnings("ignore", message="This package.*has been renamed to.*ddgs", category=RuntimeWarning)
 
 try:
     from ddgs import DDGS
