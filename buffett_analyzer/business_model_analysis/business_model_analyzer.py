@@ -1,7 +1,8 @@
 """
 商业模式分析主模块（Module 4）
-总分 23 分 = 定性 13 分（Coze LLM）+ 定量 10 分（资本开支 4 分 + 自由现金流 6 分）
+总分 20 分 = 定性 10 分（Coze LLM）+ 定量 10 分（资本开支 4 分 + 自由现金流 6 分）
 
+增长确定性（3分）已移至估值模块，由估值模块复用本模块的定性缓存。
 所有定量分析数据严格从 SQLite 读取，不直接走网络 fallback。
 """
 
@@ -47,10 +48,9 @@ class BusinessModelAnalyzer(AnalyzerBase):
         # 5. 构建维度
         dimensions = {}
 
-        # 定性维度
+        # 定性维度（注意：growth_certainty 已移至估值模块，此处保留在缓存中供估值复用）
         stability = llm_result.get("income_stability", {})
         quality = llm_result.get("business_model_quality", {})
-        growth_certainty = llm_result.get("growth_certainty", {})
 
         dimensions["income_stability"] = {
             "score": stability.get("score", 0.0),
@@ -61,11 +61,6 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "score": quality.get("score", 0.0),
             "max_score": 5.0,
             "reason": quality.get("reason", ""),
-        }
-        dimensions["growth_certainty"] = {
-            "score": growth_certainty.get("score", 0.0),
-            "max_score": 3.0,
-            "reason": growth_certainty.get("reason", ""),
         }
 
         # 定量维度：资本开支（满分 4 分）
@@ -111,7 +106,6 @@ class BusinessModelAnalyzer(AnalyzerBase):
         qualitative_total = (
             dimensions["income_stability"]["score"]
             + dimensions["business_model_quality"]["score"]
-            + dimensions["growth_certainty"]["score"]
         )
         quantitative_total = (
             dimensions["capex_efficiency"]["score"]
@@ -123,11 +117,11 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
         summary = {
             "qualitative_score": round(qualitative_total, 1),
-            "qualitative_max": 13.0,
+            "qualitative_max": 10.0,
             "quantitative_score": quantitative_total,
             "quantitative_max": 10.0,
             "total_score": total_score,
-            "max_score": 23.0,
+            "max_score": 20.0,
             "rating": rating,
         }
 
@@ -150,7 +144,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             module_name=self.module_name,
             stock_code=self.stock_code,
             total_score=total_score,
-            max_score=23.0,
+            max_score=20.0,
             rating=rating,
             dimensions=dimensions,
             summary=summary,
@@ -414,12 +408,12 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
     @staticmethod
     def _rating(total: float) -> str:
-        # 总分 23 分 = 定性 13 + 定量 10
-        if total >= 19.5:
+        # 总分 20 分 = 定性 10 + 定量 10
+        if total >= 17.0:
             return "优秀"
-        elif total >= 15.5:
+        elif total >= 13.5:
             return "良好"
-        elif total >= 10.5:
+        elif total >= 9.0:
             return "中等"
         else:
             return "较差"
