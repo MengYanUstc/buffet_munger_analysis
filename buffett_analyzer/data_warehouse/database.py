@@ -131,6 +131,53 @@ class Database:
             )
             conn.commit()
 
+            # 新增 AI 定性评分审计表
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_qualitative_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT,
+                    industry_type TEXT,
+                    dimension_id TEXT,
+                    dimension_name TEXT,
+                    score_type TEXT,
+                    base_score REAL,
+                    ai_adjustment REAL,
+                    final_score REAL,
+                    max_score REAL,
+                    reason TEXT,
+                    details_json TEXT,
+                    model_name TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.commit()
+
+            # 兼容旧表：为 ai_qualitative_scores 增加 details_json 列
+            aq_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_qualitative_scores)")]
+            if "details_json" not in aq_cols:
+                conn.execute("ALTER TABLE ai_qualitative_scores ADD COLUMN details_json TEXT")
+                conn.commit()
+
+            # 新增 AI 定性评分缓存表（24小时缓存）
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ai_qualitative_cache (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    stock_code TEXT,
+                    industry_type TEXT,
+                    facts_hash TEXT,
+                    response_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_qualitative_cache(stock_code, industry_type, facts_hash, created_at)"
+            )
+            conn.commit()
+
     def fetchone(self, sql: str, parameters=()):
         with self._connect() as conn:
             cursor = conn.execute(sql, parameters)

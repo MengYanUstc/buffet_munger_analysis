@@ -106,8 +106,19 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     elif trend_diff >= -3:    trend = "温和下降"
     else:                     trend = "明显下降"
 
-    lower = round_score(max(0.0, base_score - 1.0), step=0.5)
-    upper = round_score(min(2.0, base_score + 1.0), step=0.5)
+    # 趋势强制惩罚规则
+    trend_penalties = {
+        "明显上升": 0.5,
+        "温和上升": 0.0,
+        "基本稳定": 0.0,
+        "温和下降": -0.5,
+        "明显下降": -1.0,
+    }
+    trend_penalty = trend_penalties.get(trend, 0.0)
+    penalty_score = round_score(max(0.0, min(2.0, base_score + trend_penalty)), step=0.5)
+
+    lower = round_score(max(0.0, penalty_score - 0.5), step=0.5)
+    upper = round_score(min(2.0, penalty_score + 0.5), step=0.5)
 
     return {
         "roe_values": [round(x, 2) for x in roes],
@@ -119,6 +130,8 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
         "trend_direction": trend,
         "trend_diff": round(trend_diff, 2),
         "suggested_base_score": base_score,
+        "trend_penalty": trend_penalty,
+        "penalty_score": penalty_score,
         "ai_adjustment_range": f"{lower:.1f} - {upper:.1f} 分",
         "max_score": 2.0,
         "min_score": 0.0
