@@ -20,6 +20,9 @@ from typing import List
 from buffett_analyzer.core import AnalyzerRegistry
 from buffett_analyzer.quality_analysis import QualityAnalyzer
 from buffett_analyzer.management_analysis import ManagementAnalyzer
+from buffett_analyzer.moat_analysis import MoatAnalyzer
+from buffett_analyzer.business_model_analysis import BusinessModelAnalyzer
+from buffett_analyzer.valuation import ValuationAnalyzer
 from buffett_analyzer.data_warehouse import DataCollector
 
 
@@ -41,10 +44,9 @@ def register_analyzers():
     """注册所有分析模块。新增模块时只需在此添加一行。"""
     AnalyzerRegistry.register(QualityAnalyzer)
     AnalyzerRegistry.register(ManagementAnalyzer)
-    # TODO: 后续模块在此处注册
-    # AnalyzerRegistry.register(ValuationAnalyzer)
-    # AnalyzerRegistry.register(MoatAnalyzer)
-    # AnalyzerRegistry.register(RiskAnalyzer)
+    AnalyzerRegistry.register(MoatAnalyzer)
+    AnalyzerRegistry.register(BusinessModelAnalyzer)
+    AnalyzerRegistry.register(ValuationAnalyzer)
 
 
 def run_modules(stock_code: str, industry_type: str, module_ids: List[str], source: str = "akshare"):

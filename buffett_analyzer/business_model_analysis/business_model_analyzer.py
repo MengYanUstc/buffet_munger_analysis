@@ -1,15 +1,18 @@
 """
 商业模式分析主模块（Module 4）
-总分 20 分 = 定性 10 分（Coze LLM）+ 定量 10 分（资本开支代码计算）
+总分 23 分 = 定性 13 分（Coze LLM）+ 定量 10 分（资本开支 4 分 + 自由现金流 6 分）
+
+所有定量分析数据严格从 SQLite 读取，不直接走网络 fallback。
 """
 
 import json
 import os
 from typing import Dict, Any
 
+import pandas as pd
+
 from ..core import AnalyzerBase, AnalysisReport
 from ..quality_scoring.coze_client import CozeLLMClient
-from ..data_fetcher import DataFetcher
 from ..data_warehouse.collector import DataCollector
 from .capex_scorer import compute_capex_score
 
@@ -22,26 +25,33 @@ class BusinessModelAnalyzer(AnalyzerBase):
         self.stock_code = stock_code
         self.industry_type = industry_type
         self.source = source
-        self.fetcher = DataFetcher(source=source)
         self.collector = DataCollector()
 
     def run(self) -> AnalysisReport:
-        # 1. 调用 Coze LLM 获取定性评分 + 行业分类/发展阶段
-        llm_result = self._call_llm_qualitative()
+        # 0. 确保财务数据已入库（缓存优先策略：先入库，后读取）
+        self.collector.collect(self.stock_code)
+
+        # 1. 从统一缓存读取定性评分 + 行业分类/发展阶段
+        llm_result = self._get_qualitative_result()
 
         # 2. 获取 LLM 判断的行业分类与发展阶段
         industry_classification = llm_result.get("industry_classification", "medium")
         growth_stage = llm_result.get("growth_stage", "mature")
 
-        # 3. 代码计算资本开支定量评分（4分）——优先从数据库读取
+        # 3. 从数据库读取并计算资本开支定量评分（4分）
         capex_result = self._compute_capex_quantitative(industry_classification, growth_stage)
 
-        # 4. 构建维度
+        # 4. 从数据库读取并计算自由现金流定量评分（6分）
+        fcf_result = self._compute_fcf_quantitative()
+
+        # 5. 构建维度
         dimensions = {}
 
         # 定性维度
         stability = llm_result.get("income_stability", {})
         quality = llm_result.get("business_model_quality", {})
+        growth_certainty = llm_result.get("growth_certainty", {})
+
         dimensions["income_stability"] = {
             "score": stability.get("score", 0.0),
             "max_score": 5.0,
@@ -51,6 +61,11 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "score": quality.get("score", 0.0),
             "max_score": 5.0,
             "reason": quality.get("reason", ""),
+        }
+        dimensions["growth_certainty"] = {
+            "score": growth_certainty.get("score", 0.0),
+            "max_score": 3.0,
+            "reason": growth_certainty.get("reason", ""),
         }
 
         # 定量维度：资本开支（满分 4 分）
@@ -64,6 +79,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 "growth_stage_adjustment": capex_result["growth_stage_adjustment"],
                 "raw_score": capex_result["raw_score"],
                 "avg_capex_ratio": capex_result["avg_capex_ratio"],
+                "cv": capex_result.get("cv"),
                 "industry_type": capex_result["industry_type"],
                 "growth_stage": capex_result["growth_stage"],
                 "reason": capex_result["reason"],
@@ -75,23 +91,43 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 "reason": capex_result.get("reason", "资本开支数据不足"),
             }
 
-        # 5. 汇总
+        # 定量维度：自由现金流质量（满分 6 分）
+        if fcf_result.get("final_score") is not None:
+            dimensions["fcf_quality"] = {
+                "score": fcf_result["final_score"],
+                "max_score": 6.0,
+                "base_score": fcf_result["base_score"],
+                "fcf_ratio": fcf_result["fcf_ratio"],
+                "reason": fcf_result["reason"],
+            }
+        else:
+            dimensions["fcf_quality"] = {
+                "score": 0.0,
+                "max_score": 6.0,
+                "reason": fcf_result.get("reason", "自由现金流数据不足"),
+            }
+
+        # 6. 汇总
         qualitative_total = (
             dimensions["income_stability"]["score"]
             + dimensions["business_model_quality"]["score"]
+            + dimensions["growth_certainty"]["score"]
         )
-        quantitative_total = dimensions["capex_efficiency"]["score"]
+        quantitative_total = (
+            dimensions["capex_efficiency"]["score"]
+            + dimensions["fcf_quality"]["score"]
+        )
         total_score = round(qualitative_total + quantitative_total, 1)
 
         rating = self._rating(total_score)
 
         summary = {
             "qualitative_score": round(qualitative_total, 1),
-            "qualitative_max": 10.0,
+            "qualitative_max": 13.0,
             "quantitative_score": quantitative_total,
-            "quantitative_max": 4.0,
+            "quantitative_max": 10.0,
             "total_score": total_score,
-            "max_score": 14.0,
+            "max_score": 23.0,
             "rating": rating,
         }
 
@@ -106,6 +142,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "llm_raw": llm_result.get("_raw_text", ""),
             "extra_info": extra_info,
             "capex_detail": capex_result.get("yearly_scores", []),
+            "fcf_detail": fcf_result.get("yearly_scores", []),
         }
 
         return AnalysisReport(
@@ -113,15 +150,20 @@ class BusinessModelAnalyzer(AnalyzerBase):
             module_name=self.module_name,
             stock_code=self.stock_code,
             total_score=total_score,
-            max_score=14.0,
+            max_score=23.0,
             rating=rating,
             dimensions=dimensions,
             summary=summary,
             raw_data=raw_data,
         )
 
-    def _call_llm_qualitative(self) -> Dict[str, Any]:
-        """调用 Coze LLM 进行商业模式定性分析。"""
+    def _get_qualitative_result(self) -> Dict[str, Any]:
+        """从统一缓存读取商业模式定性结果，若缺失则 fallback 到本地调用。"""
+        cached = self.collector.get_qualitative_result(self.stock_code, "business_model")
+        if cached is not None:
+            return cached
+
+        print("[BusinessModelAnalyzer] 缓存未命中，本地调用 Coze LLM...")
         token = os.getenv("COZE_API_TOKEN")
         if token:
             client = CozeLLMClient(api_token=token)
@@ -133,7 +175,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         if not client.is_configured():
             return self._empty_result("Coze API Token 未配置")
 
-        prompt = self._build_prompt()
+        prompt = self.build_qualitative_prompt(self.stock_code)
         try:
             result = client.call(prompt, timeout=120)
             return result
@@ -145,25 +187,16 @@ class BusinessModelAnalyzer(AnalyzerBase):
         self, industry_classification: str, growth_stage: str
     ) -> Dict[str, Any]:
         """
-        代码计算资本开支定量评分（4分）。
-        优先从数据库 financial_reports 表读取 capex 和 parent_net_profit，
-        若数据库缺失则 fallback 到网络获取。
+        从数据库读取资本开支数据，计算定量评分（4分）。
+        数据流：SQLite → read_financial_reports → compute_capex_score
         """
         try:
-            # 优先从数据库读取（缓存优先策略）
             df = self.collector.cache.read_financial_reports(self.stock_code)
-            if not df.empty and "capex" in df.columns and "parent_net_profit" in df.columns:
-                capex_values = df["capex"].dropna().tolist()
-                profit_values = df["parent_net_profit"].dropna().tolist()
-                source_note = "数据来源：SQLite 缓存"
-            else:
-                # fallback：从网络获取
-                df = self.fetcher.fetch_capex_and_profit_data(self.stock_code)
-                if df.empty or "资本开支" not in df.columns or "PARENTNETPROFIT" not in df.columns:
-                    return {"final_score": None, "reason": "资本开支或净利润数据缺失"}
-                capex_values = df["资本开支"].dropna().tolist()
-                profit_values = df["PARENTNETPROFIT"].dropna().tolist()
-                source_note = "数据来源：akshare 实时获取"
+            if df.empty or "capex" not in df.columns or "parent_net_profit" not in df.columns:
+                return {"final_score": None, "reason": "数据库中缺少资本开支或净利润数据"}
+
+            capex_values = df["capex"].dropna().tolist()
+            profit_values = df["parent_net_profit"].dropna().tolist()
 
             if len(capex_values) == 0 or len(profit_values) == 0:
                 return {"final_score": None, "reason": "资本开支或净利润数据为空"}
@@ -174,17 +207,78 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 industry_type=industry_classification,
                 growth_stage=growth_stage,
             )
-            result["source_note"] = source_note
+            result["source_note"] = "数据来源：SQLite 缓存"
             return result
         except Exception as e:
             print(f"[BusinessModelAnalyzer] 资本开支计算失败: {e}")
             return {"final_score": None, "reason": str(e)}
 
-    def _build_prompt(self) -> str:
-        """构建商业模式定性分析 Prompt。"""
+    def _compute_fcf_quantitative(self) -> Dict[str, Any]:
+        """
+        从数据库读取自由现金流和净利润数据，计算 FCF 质量评分（6分）。
+        数据流：SQLite → read_financial_reports → 逐年度评分 → 取平均分
+        """
+        try:
+            df = self.collector.cache.read_financial_reports(self.stock_code)
+            if df.empty or "fcf" not in df.columns:
+                return {"final_score": None, "reason": "数据库中缺少自由现金流数据"}
+
+            # 优先用 net_profit，缺失时 fallback 到 parent_net_profit
+            profit_col = None
+            if "net_profit" in df.columns and df["net_profit"].notna().any():
+                profit_col = "net_profit"
+            elif "parent_net_profit" in df.columns and df["parent_net_profit"].notna().any():
+                profit_col = "parent_net_profit"
+
+            if profit_col is None:
+                return {"final_score": None, "reason": "数据库中缺少净利润数据"}
+
+            yearly_scores = []
+            yearly_ratios = []
+            for _, row in df.iterrows():
+                fcf = row.get("fcf")
+                profit = row.get(profit_col)
+                if pd.notna(fcf) and pd.notna(profit) and profit != 0:
+                    base_score, ratio = _calculate_fcf_score(float(fcf), float(profit))
+                    yearly_scores.append({
+                        "report_date": str(row.get("report_date", "")),
+                        "fcf": round(float(fcf), 2),
+                        "net_profit": round(float(profit), 2),
+                        "fcf_ratio": round(ratio, 3),
+                        "base_score": base_score,
+                    })
+                    yearly_ratios.append(ratio)
+
+            if not yearly_scores:
+                return {"final_score": None, "reason": "自由现金流或净利润有效数据为空"}
+
+            # 多年度平均分（满分 6 分）
+            avg_score = sum(s["base_score"] for s in yearly_scores) / len(yearly_scores)
+            avg_ratio = sum(yearly_ratios) / len(yearly_ratios)
+            final_score = round(avg_score, 1)
+
+            reason = (
+                f"共 {len(yearly_scores)} 年数据，FCF/净利润 平均比率={avg_ratio:.2f}，"
+                f"年度平均分={avg_score:.1f}分（满分6分）"
+            )
+
+            return {
+                "final_score": final_score,
+                "base_score": avg_score,
+                "fcf_ratio": round(avg_ratio, 3),
+                "yearly_scores": yearly_scores,
+                "reason": reason,
+            }
+        except Exception as e:
+            print(f"[BusinessModelAnalyzer] 自由现金流计算失败: {e}")
+            return {"final_score": None, "reason": str(e)}
+
+    @staticmethod
+    def build_qualitative_prompt(stock_code: str) -> str:
+        """构建商业模式定性分析 Prompt（供外部统一调用）。"""
         return f"""你是一位资深中国A股投资分析师，擅长巴菲特-芒格式的价值投资框架中的商业模式分析。
 
-请对 **{self.stock_code}** 进行深度商业模式评估。
+请对 **{stock_code}** 进行深度商业模式评估。
 要求完全基于你所掌握的公开信息（财报、年报、行业报告、新闻报道等）独立判断。
 
 ---
@@ -217,7 +311,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
 ---
 
-## 第三步：评分（共10分）
+## 第三步：评分（共13分）
 
 ### 1. 收入稳定性评估（满分 5 分）
 
@@ -245,6 +339,24 @@ class BusinessModelAnalyzer(AnalyzerBase):
 - **3分**：赚钱逻辑清晰但盈利一般，或规模效应不明显，或有一定风险
 - **1分**：赚钱逻辑不清晰、盈利困难、抗风险能力弱
 
+### 3. 增长确定性评估（满分 3 分）
+
+核心问题：该公司未来5年盈利增长的确定性如何？
+
+评估因素：
+- **历史增长质量**：过去5年营收和净利润CAGR是多少？增长趋势是加速、稳定还是放缓？增长驱动因素是否可持续？
+- **行业增长前景**：行业处于什么生命周期阶段？市场规模增长空间有多大？政策环境是否有利？
+- **竞争地位**：市场份额是多少？趋势是提升还是下滑？护城河强度如何？竞争优势是否可持续？
+- **增长驱动因素**：是否有新产品或新业务储备？是否有产能扩张计划？是否有市场拓展空间？是否有提价能力？
+
+锚点：
+- **3分（高确定性）**：过去5年持续增长CAGR>10%、行业处于成长期或成熟期、行业龙头地位稳固、有明确增长驱动因素
+- **2分（中等确定性）**：增长有波动但趋势向上、行业增长稳定但竞争加剧、有一定竞争优势、增长驱动因素存在但不确定性较大
+- **1分（低确定性）**：增长趋势放缓或停滞、行业面临转型或挑战、竞争地位不稳固、缺乏明确增长驱动因素
+- **0分（不确定）**：负增长或大幅波动、行业前景黯淡、份额持续下滑、公司经营面临重大风险
+
+注意：避免过度乐观；关注拐点信号；区分周期性与结构性；存在重大不确定性时，倾向于给较低评分。
+
 ---
 
 ## 输出要求（严格 JSON 格式）
@@ -253,7 +365,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
 ```json
 {{
-  "stock_code": "{self.stock_code}",
+  "stock_code": "{stock_code}",
   "industry_classification": "light/medium/heavy",
   "industry_classification_desc": "具体说明",
   "growth_stage": "startup/growth/mature/decline",
@@ -269,8 +381,13 @@ class BusinessModelAnalyzer(AnalyzerBase):
     "max_score": 5.0,
     "reason": "详细说明，引用具体事实"
   }},
+  "growth_certainty": {{
+    "score": X.X,
+    "max_score": 3.0,
+    "reason": "详细说明，引用具体事实"
+  }},
   "total_score": X.X,
-  "max_total": 10.0,
+  "max_total": 13.0,
   "rating": "优秀/良好/中等/较差",
   "key_facts": ["事实1", "事实2"],
   "risk_warnings": ["风险1"]
@@ -291,17 +408,53 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "business_model_description": f"LLM 调用失败: {reason}",
             "income_stability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "business_model_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "growth_certainty": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "total_score": 0.0,
         }
 
     @staticmethod
     def _rating(total: float) -> str:
-        # 总分 14 分 = 定性 10 + 定量 4
-        if total >= 12.0:
+        # 总分 23 分 = 定性 13 + 定量 10
+        if total >= 19.5:
             return "优秀"
-        elif total >= 9.5:
+        elif total >= 15.5:
             return "良好"
-        elif total >= 6.5:
+        elif total >= 10.5:
             return "中等"
         else:
             return "较差"
+
+
+def _calculate_fcf_score(fcf: float, net_profit: float) -> tuple:
+    """
+    计算自由现金流质量基础分（单年度数据）
+
+    Args:
+        fcf: 自由现金流（万元）
+        net_profit: 净利润（万元）
+
+    Returns:
+        (基础分, FCF/净利润 ratio)
+    """
+    if net_profit == 0:
+        return 0, 0.0
+
+    fcf_ratio = fcf / net_profit
+
+    # FCF 为负
+    if fcf <= 0:
+        return 0, fcf_ratio
+
+    # FCF 为正，按比例评分（6分制）
+    if fcf_ratio >= 1.0:
+        return 6, fcf_ratio
+    elif fcf_ratio >= 0.8:
+        return 5, fcf_ratio
+    elif fcf_ratio >= 0.6:
+        return 4, fcf_ratio
+    elif fcf_ratio >= 0.4:
+        return 3, fcf_ratio
+    elif fcf_ratio >= 0.2:
+        return 2, fcf_ratio
+    else:
+        return 1, fcf_ratio

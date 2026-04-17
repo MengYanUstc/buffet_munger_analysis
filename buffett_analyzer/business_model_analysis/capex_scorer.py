@@ -4,33 +4,56 @@
 评分规则（总分 4 分）：
 
 1. 基础分（0-4分）：根据平均资本开支/净利润比率
-   - < 0.2:  4分（资本效率极高）
-   - 0.2~0.4: 3分
-   - 0.4~0.6: 2分
-   - 0.6~0.8: 1分
-   - ≥ 0.8:   0分
+   行业类型不同，阈值分布不同：
 
-2. 稳定性找补（0~+1分）：资本开支波动率越低越优秀
+   轻资产（light）：
+   - < 0.10:   4分（资本效率极高）
+   - 0.10~0.25: 3分
+   - 0.25~0.40: 2分
+   - 0.40~0.55: 1分
+   - ≥ 0.55:   0分
+
+   中等资产（medium）：
+   - < 0.20:   4分
+   - 0.20~0.40: 3分
+   - 0.40~0.60: 2分
+   - 0.60~0.80: 1分
+   - ≥ 0.80:   0分
+
+   重资产（heavy）：
+   - < 0.30:   4分
+   - 0.30~0.50: 3分
+   - 0.50~0.70: 2分
+   - 0.70~0.90: 1分
+   - ≥ 0.90:   0分
+
+2. 稳定性调整（-1~+1分，0.5步长）：资本开支波动率
    - CV < 0.15: +1.0分（极稳定，规划性强）
    - CV < 0.35: +0.5分（相对稳定）
-   - 否则: 0分
+   - CV < 0.55: 0分（正常波动）
+   - CV < 0.75: -0.5分（波动较大）
+   - CV ≥ 0.75: -1.0分（波动极大，规划性弱）
 
 3. 行业找补（0~+0.5分）：重资产企业 capex 高是行业特性
-   - heavy（重资产）: +0.5分
+   - heavy: +0.5分
    - medium / light: 0分
 
 4. 阶段找补（0~+0.5分）：成长期/初创期 capex 高是扩张需要
    - growth / startup: +0.5分
    - mature / decline: 0分
 
-最终分 = min(4.0, 基础分 + 稳定性找补 + 行业找补 + 阶段找补)
-
-设计原则：三项调整均为"找补"——针对被基础分"一刀切"低估的企业进行补偿，
-不用于给已经高分的企业继续加分。最终分严格限制在 [0, 4]。
+最终分 = max(0.0, min(4.0, 基础分 + 稳定性调整 + 行业找补 + 阶段找补))
 """
 
 from typing import List, Dict, Any
 import statistics
+
+# 行业类型对应的 capex/净利润 阈值分布
+_INDUSTRY_THRESHOLDS = {
+    "light":  [0.10, 0.25, 0.40, 0.55],   # 轻资产：阈值更严格
+    "medium": [0.20, 0.40, 0.60, 0.80],   # 中等资产：默认阈值
+    "heavy":  [0.30, 0.50, 0.70, 0.90],   # 重资产：阈值更宽松
+}
 
 
 def compute_capex_score(
@@ -70,12 +93,13 @@ def compute_capex_score(
         })
 
     avg_ratio = statistics.mean(yearly_ratios) if yearly_ratios else 0.0
+    cv_value = _cv(capex)
 
-    # 2. 基础分（0-4分）
-    base_score = _base_score_by_ratio(avg_ratio)
+    # 2. 基础分（0-4分），按行业类型区分阈值
+    base_score = _base_score_by_ratio(avg_ratio, industry_type)
 
-    # 3. 稳定性找补（0~+1分）
-    stability_adj = _stability_adjustment(capex)
+    # 3. 稳定性调整（-1~+1分，0.5步长）
+    stability_adj = _stability_adjustment(cv_value)
 
     # 4. 行业找补（0~+0.5分）
     industry_adj = _industry_adjustment(industry_type)
@@ -88,9 +112,9 @@ def compute_capex_score(
     final_score = max(0.0, min(4.0, raw_score))
 
     reason = (
-        f"平均资本开支/净利润比率={avg_ratio:.2f}，基础分={base_score}分；"
-        f"资本开支波动率(CV)={_cv(capex):.2f}，稳定性找补={stability_adj:+.1f}分；"
-        f"行业类型={industry_type}，行业找补={industry_adj:+.1f}分；"
+        f"平均资本开支/净利润比率={avg_ratio:.2f}（行业类型={industry_type}），基础分={base_score}分；"
+        f"资本开支波动率(CV)={cv_value:.2f}，稳定性调整={stability_adj:+.1f}分；"
+        f"行业找补={industry_adj:+.1f}分；"
         f"发展阶段={growth_stage}，阶段找补={stage_adj:+.1f}分；"
         f"最终得分={final_score:.1f}分（上限4分）"
     )
@@ -103,6 +127,7 @@ def compute_capex_score(
         "growth_stage_adjustment": stage_adj,
         "raw_score": round(raw_score, 1),
         "avg_capex_ratio": round(avg_ratio, 3),
+        "cv": round(cv_value, 3),
         "industry_type": industry_type,
         "growth_stage": growth_stage,
         "yearly_scores": yearly_details,
@@ -110,29 +135,38 @@ def compute_capex_score(
     }
 
 
-def _base_score_by_ratio(ratio: float) -> float:
-    """根据平均资本开支比率计算基础分（0-4分）。"""
-    if ratio < 0.2:
+def _base_score_by_ratio(ratio: float, industry_type: str = "medium") -> float:
+    """根据平均资本开支比率和行业类型计算基础分（0-4分）。"""
+    thresholds = _INDUSTRY_THRESHOLDS.get(industry_type, _INDUSTRY_THRESHOLDS["medium"])
+    t1, t2, t3, t4 = thresholds
+
+    if ratio < t1:
         return 4.0
-    elif ratio < 0.4:
+    elif ratio < t2:
         return 3.0
-    elif ratio < 0.6:
+    elif ratio < t3:
         return 2.0
-    elif ratio < 0.8:
+    elif ratio < t4:
         return 1.0
     else:
         return 0.0
 
 
-def _stability_adjustment(capex_values: List[float]) -> float:
-    """稳定性找补（0~+1分）：资本开支波动率越低越优秀。"""
-    cv = _cv(capex_values)
+def _stability_adjustment(cv: float) -> float:
+    """
+    稳定性调整（-1~+1分，0.5步长）：
+    资本开支波动率越低越优秀，波动越大越扣分。
+    """
     if cv < 0.15:
         return 1.0
     elif cv < 0.35:
         return 0.5
-    else:
+    elif cv < 0.55:
         return 0.0
+    elif cv < 0.75:
+        return -0.5
+    else:
+        return -1.0
 
 
 def _industry_adjustment(industry_type: str) -> float:

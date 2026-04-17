@@ -6,10 +6,10 @@
 from typing import Dict, Any
 import numpy as np
 
-from .data_fetcher import DataFetcher
 from .scorer import calculate_cagr, analyze_roe_stability, analyze_debt_ratio
 from .quality_scoring import AiScoringEngine, get_default_plugins
 from .data_warehouse.database import Database
+from .data_warehouse.collector import DataCollector
 from .core import AnalyzerBase, AnalysisReport
 
 
@@ -20,56 +20,62 @@ class QualityAnalyzer(AnalyzerBase):
     def __init__(self, stock_code: str, industry_type: str = "general", source: str = "akshare"):
         self.stock_code = stock_code
         self.industry_type = industry_type
-        self.fetcher = DataFetcher(source=source)
+        self.collector = DataCollector()
 
     def run(self) -> AnalysisReport:
         """执行完整的企业质量分析流程，返回标准化报告。"""
-        # 1. 获取数据
-        df_ind = self.fetcher.fetch_indicator_data(self.stock_code)
-        df_profit = self.fetcher.fetch_profit_data(self.stock_code)
-        df_balance = self.fetcher.fetch_balance_data(self.stock_code)
+        # 0. 确保财务数据已入库（缓存优先策略）
+        self.collector.collect(self.stock_code)
+
+        # 1. 从数据库读取财务数据
+        df = self.collector.cache.read_financial_reports(self.stock_code)
 
         # 2. 提取核心指标（仅最近 5 个完整年度）
         roe_values = []
         avg_roe = None
-        if not df_ind.empty and "ROEJQ" in df_ind.columns:
-            roe_values = df_ind["ROEJQ"].dropna().tail(5).tolist()
+        if not df.empty and "roe" in df.columns:
+            roe_values = df["roe"].dropna().tail(5).tolist()
             if roe_values:
                 avg_roe = float(np.mean(roe_values))
 
         roic_values = []
         avg_roic = None
-        if not df_ind.empty and "ROIC" in df_ind.columns:
-            roic_values = df_ind["ROIC"].dropna().tail(5).tolist()
+        if not df.empty and "roic" in df.columns:
+            roic_values = df["roic"].dropna().tail(5).tolist()
             if roic_values:
                 avg_roic = float(np.mean(roic_values))
 
         revenue_cagr = None
-        if not df_profit.empty and "TOTAL_OPERATE_INCOME" in df_profit.columns:
-            rev_series = df_profit["TOTAL_OPERATE_INCOME"].dropna().tail(5)
+        if not df.empty and "revenue" in df.columns:
+            rev_series = df["revenue"].dropna().tail(5)
             if len(rev_series) >= 2:
                 revenue_cagr = calculate_cagr(rev_series.tolist())
 
         profit_cagr = None
         used_profit_metric = None
-        if not df_profit.empty:
+        if not df.empty:
             profit_series = None
-            if "PARENT_NETPROFIT" in df_profit.columns:
-                ps = df_profit["PARENT_NETPROFIT"].dropna().tail(5)
+            if "parent_net_profit" in df.columns:
+                ps = df["parent_net_profit"].dropna().tail(5)
                 if len(ps) >= 2:
                     profit_series = ps
                     used_profit_metric = "归属于母公司股东的净利润"
-            if profit_series is None and "DEDUCT_PARENT_NETPROFIT" in df_profit.columns:
-                ps = df_profit["DEDUCT_PARENT_NETPROFIT"].dropna().tail(5)
+            if profit_series is None and "deduct_net_profit" in df.columns:
+                ps = df["deduct_net_profit"].dropna().tail(5)
                 if len(ps) >= 2:
                     profit_series = ps
                     used_profit_metric = "扣除非经常性损益后的净利润"
+            if profit_series is None and "net_profit" in df.columns:
+                ps = df["net_profit"].dropna().tail(5)
+                if len(ps) >= 2:
+                    profit_series = ps
+                    used_profit_metric = "净利润"
             if profit_series is not None and len(profit_series) >= 2:
                 profit_cagr = calculate_cagr(profit_series.tolist())
 
         debt_ratio = None
-        if not df_balance.empty and "资产负债率" in df_balance.columns:
-            latest_ratio_series = df_balance["资产负债率"].dropna()
+        if not df.empty and "debt_ratio" in df.columns:
+            latest_ratio_series = df["debt_ratio"].dropna()
             if len(latest_ratio_series) > 0:
                 debt_ratio = float(latest_ratio_series.iloc[-1])
 

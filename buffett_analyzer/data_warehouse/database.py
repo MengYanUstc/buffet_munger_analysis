@@ -14,6 +14,7 @@ class Database:
         self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_tables()
+        self._init_qualitative_tables()
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path))
@@ -182,3 +183,19 @@ class Database:
         with self._connect() as conn:
             cursor = conn.execute(sql, parameters)
             return cursor.fetchone()
+
+    def _init_qualitative_tables(self):
+        """初始化定性分析结果缓存表"""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS qualitative_results (
+                    stock_code TEXT NOT NULL,
+                    analysis_type TEXT NOT NULL,
+                    result_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (stock_code, analysis_type)
+                )
+                """
+            )
+            conn.commit()

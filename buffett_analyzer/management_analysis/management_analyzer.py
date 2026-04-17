@@ -10,6 +10,7 @@ from .plugins import CapitalAllocationPlugin, IntegrityPlugin
 from ..core import AnalyzerBase, AnalysisReport
 from ..quality_scoring import AiScoringEngine
 from ..data_warehouse.database import Database
+from ..data_warehouse.collector import DataCollector
 
 
 class ManagementAnalyzer(AnalyzerBase):
@@ -20,10 +21,21 @@ class ManagementAnalyzer(AnalyzerBase):
         self.stock_code = stock_code
         self.industry_type = industry_type
         self.fetcher = ManagementDataFetcher(source=source)
+        self.collector = DataCollector()
 
     def run(self) -> AnalysisReport:
-        # 1. 获取数据
+        # 0. 确保财务数据已入库（缓存优先策略）
+        self.collector.collect(self.stock_code)
+
+        # 1. 获取数据（管理层特有数据：分红、质押、并购、违规等）
         data = self.fetcher.fetch_all(self.stock_code)
+
+        # 1.5 定量数据优先从 SQLite 读取并覆盖（ROIC趋势）
+        df = self.collector.cache.read_financial_reports(self.stock_code)
+        if not df.empty and "roic" in df.columns:
+            roic_values = df["roic"].dropna().tail(5).tolist()
+            if len(roic_values) >= 2:
+                data["roic_trend"] = self._compute_roic_trend(roic_values)
 
         # 2. 构建上下文
         context = {
@@ -108,6 +120,28 @@ class ManagementAnalyzer(AnalyzerBase):
             risk_warnings=risks,
             raw_data=raw_data,
         )
+
+    @staticmethod
+    def _compute_roic_trend(roic_values: list) -> dict:
+        """根据数据库ROIC数据计算趋势。"""
+        first_mean = sum(roic_values[:2]) / 2
+        last_mean = sum(roic_values[-2:]) / 2
+        diff = last_mean - first_mean
+        if diff >= 3:
+            trend = "明显上升"
+        elif diff >= 1:
+            trend = "温和上升"
+        elif diff >= -1:
+            trend = "基本稳定"
+        elif diff >= -3:
+            trend = "温和下降"
+        else:
+            trend = "明显下降"
+        return {
+            "values": [round(v, 2) for v in roic_values],
+            "trend": trend,
+            "trend_diff": round(diff, 2),
+        }
 
     @staticmethod
     def _format_dimension(res) -> Dict[str, Any]:

@@ -8,9 +8,9 @@ import os
 from typing import Dict, Any, List
 
 from ..core import AnalyzerBase, AnalysisReport
-from ..data_fetcher import DataFetcher
 from .gross_margin_scorer import compute_gross_margin_score
 from ..quality_scoring.coze_client import CozeLLMClient
+from ..data_warehouse.collector import DataCollector
 
 
 class MoatAnalyzer(AnalyzerBase):
@@ -20,17 +20,20 @@ class MoatAnalyzer(AnalyzerBase):
     def __init__(self, stock_code: str, industry_type: str = "general", source: str = "akshare"):
         self.stock_code = stock_code
         self.industry_type = industry_type
-        self.fetcher = DataFetcher(source=source)
+        self.collector = DataCollector()
 
     def run(self) -> AnalysisReport:
-        # 1. 获取毛利率数据（定量基础）
+        # 0. 确保财务数据已入库
+        self.collector.collect(self.stock_code)
+
+        # 1. 从数据库读取毛利率数据（定量基础）
         gm_data = self._fetch_gross_margin_data()
 
         # 2. 代码计算毛利率稳定性评分（4分）
         gm_result = compute_gross_margin_score(gm_data.get("values", []))
 
-        # 3. 调用 Coze LLM 进行定性分析（26分）
-        llm_result = self._call_llm_qualitative(gm_result)
+        # 3. 从统一缓存读取护城河定性分析（26分）
+        llm_result = self._get_qualitative_result(gm_result)
 
         # 4. 汇总
         dimensions = {}
@@ -112,44 +115,50 @@ class MoatAnalyzer(AnalyzerBase):
         )
 
     def _fetch_gross_margin_data(self) -> Dict[str, Any]:
-        """获取近5年毛利率数据。"""
+        """从数据库读取近5年毛利率数据。"""
         try:
-            df = self.fetcher.fetch_gross_margin_data(self.stock_code)
-            if df.empty or "毛利率" not in df.columns:
+            df = self.collector.cache.read_financial_reports(self.stock_code)
+            if df.empty or "gross_margin" not in df.columns:
                 return {"values": []}
-            values = df["毛利率"].dropna().tail(5).tolist()
+            values = df["gross_margin"].dropna().tail(5).tolist()
             return {"values": values}
         except Exception as e:
-            print(f"[MoatAnalyzer] 毛利率数据获取失败: {e}")
+            print(f"[MoatAnalyzer] 毛利率数据读取失败: {e}")
             return {"values": []}
 
-    def _call_llm_qualitative(self, gm_result: Dict[str, Any]) -> Dict[str, Any]:
-        """调用 Coze LLM 进行护城河定性分析，返回结构化评分。"""
-        # 优先从环境变量读取，否则使用内置 token（测试用）
+    def _get_qualitative_result(self, gm_result: Dict[str, Any]) -> Dict[str, Any]:
+        """从统一缓存读取护城河定性结果，若缺失则 fallback 到本地调用。"""
+        # 优先从统一缓存读取
+        cached = self.collector.get_qualitative_result(self.stock_code, "moat")
+        if cached is not None:
+            return cached
+
+        # fallback：本地调用 Coze（兼容模式）
+        print("[MoatAnalyzer] 缓存未命中，本地调用 Coze LLM...")
         token = os.getenv("COZE_API_TOKEN")
         if token:
             client = CozeLLMClient(api_token=token)
         else:
-            # 内置 token（生产环境应通过环境变量配置）
             client = CozeLLMClient(
                 api_token="eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDI4NzY5LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjI5NzAzNDY5NzEyMDE1Mzg3In0.ZtfPq2Btc6ThWGiIG2kt3qmbw69ccPGQA_Rt7nXxUDPtLICKptgdkjU47fWISalpi1Wr7vbYEJM1Y5dXLmnVHlKLjUpwrH79unmURLgSieMlMAth4txWQYSdDbAeNRmTOW6PxN7gST35sRDpnhIWYn8dDnnEshr6L_H1mnAUTGOv7RgJDBjqxBsl2GyRkkF3hcUPKo4ALWZT09k-zeS1P6jnuAGozKwnC9dARZ6EvbSrQwRSUMLRAQ4a8h-WbkkJ23Pc-xUKq-IB_g1X2q_CyylL9AGCdASkcz7kfi4wQFM2svKnlulk_akWYruqVJTN7b2gqAWaExJaptfB0EjHqA"
             )
         if not client.is_configured():
             return self._empty_qualitative_result("Coze API Token 未配置")
 
-        prompt = self._build_prompt(gm_result)
+        prompt = self.build_qualitative_prompt(self.stock_code, gm_result)
         try:
             result = client.call(prompt, timeout=120)
-            result["_raw_text"] = ""  # 占位，CozeClient 不返回原始文本
+            result["_raw_text"] = ""
             return result
         except Exception as e:
             print(f"[MoatAnalyzer] Coze LLM 调用失败: {e}")
             return self._empty_qualitative_result(str(e))
 
-    def _build_prompt(self, gm_result: Dict[str, Any]) -> str:
-        """构建护城河定性分析 Prompt。"""
+    @staticmethod
+    def build_qualitative_prompt(stock_code: str, gm_result: Dict[str, Any]) -> str:
+        """构建护城河定性分析 Prompt（供外部统一调用）。"""
         gm_text = ""
-        if gm_result.get("values"):
+        if gm_result and gm_result.get("values"):
             gm_text = (
                 f"近5年毛利率数据：{gm_result['values']}%，"
                 f"标准差 {gm_result.get('std', 'N/A')}%，"
@@ -158,7 +167,7 @@ class MoatAnalyzer(AnalyzerBase):
 
         return f"""你是一位资深中国A股投资分析师，擅长巴菲特-芒格式的价值投资框架中的护城河分析。
 
-请对 **{self.stock_code}** 的护城河进行深度定性评估。
+请对 **{stock_code}** 的护城河进行深度定性评估。
 要求完全基于你所掌握的公开信息（财报、行业报告、新闻、公告等）独立判断。
 
 ## 已知财务事实
@@ -237,7 +246,7 @@ class MoatAnalyzer(AnalyzerBase):
 
 ```json
 {{
-  "stock_code": "{self.stock_code}",
+  "stock_code": "{stock_code}",
   "industry_quality": {{
     "score": X.X,
     "max_score": 6.0,

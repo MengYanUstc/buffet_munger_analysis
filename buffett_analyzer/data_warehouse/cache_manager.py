@@ -183,3 +183,45 @@ class CacheManager:
             (stock_code, field_name, str(old_value) if old_value is not None else None,
              str(new_value) if new_value is not None else None, source, now)
         )
+
+    # ------------------------------------------------------------------
+    # 定性分析结果缓存
+    # ------------------------------------------------------------------
+    def has_fresh_qualitative(self, stock_code: str, analysis_type: str, hours: int = 24) -> bool:
+        """检查定性分析结果是否在指定时间内。"""
+        row = self.db.fetchone(
+            """
+            SELECT created_at FROM qualitative_results
+            WHERE stock_code=? AND analysis_type=?
+            AND created_at > datetime('now', '-{} hours')
+            """.format(hours),
+            (stock_code, analysis_type)
+        )
+        return row is not None
+
+    def read_qualitative_result(self, stock_code: str, analysis_type: str) -> Optional[Dict[str, Any]]:
+        """读取定性分析结果。"""
+        row = self.db.fetchone(
+            "SELECT result_json FROM qualitative_results WHERE stock_code=? AND analysis_type=?",
+            (stock_code, analysis_type)
+        )
+        if not row or not row["result_json"]:
+            return None
+        import json
+        try:
+            return json.loads(row["result_json"])
+        except json.JSONDecodeError:
+            return None
+
+    def write_qualitative_result(self, stock_code: str, analysis_type: str, result: Dict[str, Any]):
+        """写入定性分析结果。"""
+        import json
+        now = datetime.datetime.now().isoformat()
+        self.db.execute(
+            """
+            INSERT OR REPLACE INTO qualitative_results
+            (stock_code, analysis_type, result_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (stock_code, analysis_type, json.dumps(result, ensure_ascii=False), now)
+        )

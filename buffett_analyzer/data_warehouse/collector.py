@@ -166,7 +166,10 @@ class DataCollector:
             web_data = self.web_search_fetcher.fill_missing(stock_code, stock_name, missing)
             self._write_enrichment_to_db(stock_code, web_data)
 
-        # 5. 重新读取完整估值
+        # 5. 统一获取定性分析数据（减少各模块独立调用 LLM 次数）
+        self.collect_qualitative(stock_code)
+
+        # 6. 重新读取完整估值
         full_val = self.cache.read_valuation(stock_code)
         if full_val:
             result["valuation"] = full_val
@@ -314,6 +317,61 @@ class DataCollector:
                 new_val["note"] = f"{existing_note}; {note}".strip("; ")
             self.cache.write_valuation(stock_code, new_val)
             print(f"[DataCollector] 已手动更新 {stock_code} 的估值数据: {list(fields.keys())}")
+
+    # ------------------------------------------------------------------
+    # 定性数据统一收集（减少LLM调用次数）
+    # 策略：护城河1次 + 商业模式1次（含增长确定性，供估值模块复用）
+    # ------------------------------------------------------------------
+    def collect_qualitative(self, stock_code: str, industry_type: str = "general"):
+        """统一获取定性分析数据，写入 SQLite 缓存供各模块复用。"""
+        import os
+        from ..quality_scoring.coze_client import CozeLLMClient
+
+        token = os.getenv("COZE_API_TOKEN")
+        if token:
+            client = CozeLLMClient(api_token=token)
+        else:
+            client = CozeLLMClient(
+                api_token="eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDI4NzY5LCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjI5NzAzNDY5NzEyMDE1Mzg3In0.ZtfPq2Btc6ThWGiIG2kt3qmbw69ccPGQA_Rt7nXxUDPtLICKptgdkjU47fWISalpi1Wr7vbYEJM1Y5dXLmnVHlKLjUpwrH79unmURLgSieMlMAth4txWQYSdDbAeNRmTOW6PxN7gST35sRDpnhIWYn8dDnnEshr6L_H1mnAUTGOv7RgJDBjqxBsl2GyRkkF3hcUPKo4ALWZT09k-zeS1P6jnuAGozKwnC9dARZ6EvbSrQwRSUMLRAQ4a8h-WbkkJ23Pc-xUKq-IB_g1X2q_CyylL9AGCdASkcz7kfi4wQFM2svKnlulk_akWYruqVJTN7b2gqAWaExJaptfB0EjHqA"
+            )
+
+        if not client.is_configured():
+            print("[DataCollector] Coze API Token 未配置，跳过定性数据收集")
+            return
+
+        # 1. 护城河定性
+        if not self.cache.has_fresh_qualitative(stock_code, 'moat'):
+            try:
+                from ..moat_analysis.moat_analyzer import MoatAnalyzer
+                # 毛利率数据用于 prompt 中的已知事实
+                df = self.cache.read_financial_reports(stock_code)
+                gm_values = df["gross_margin"].dropna().tail(5).tolist() if not df.empty and "gross_margin" in df.columns else []
+                gm_result = {"values": gm_values, "std": 0.0, "trend": {"trend_direction": "N/A"}} if gm_values else {}
+                prompt = MoatAnalyzer.build_qualitative_prompt(stock_code, gm_result)
+                result = client.call(prompt, timeout=120)
+                self.cache.write_qualitative_result(stock_code, 'moat', result)
+                print(f"[DataCollector] 护城河定性数据已缓存 ({stock_code})")
+            except Exception as e:
+                print(f"[DataCollector] 护城河定性收集失败: {e}")
+        else:
+            print(f"[DataCollector] 护城河定性缓存命中 ({stock_code})")
+
+        # 2. 商业模式定性（包含增长确定性，供估值模块复用）
+        if not self.cache.has_fresh_qualitative(stock_code, 'business_model'):
+            try:
+                from ..business_model_analysis.business_model_analyzer import BusinessModelAnalyzer
+                prompt = BusinessModelAnalyzer.build_qualitative_prompt(stock_code)
+                result = client.call(prompt, timeout=120)
+                self.cache.write_qualitative_result(stock_code, 'business_model', result)
+                print(f"[DataCollector] 商业模式定性数据已缓存 ({stock_code})")
+            except Exception as e:
+                print(f"[DataCollector] 商业模式定性收集失败: {e}")
+        else:
+            print(f"[DataCollector] 商业模式定性缓存命中 ({stock_code})")
+
+    def get_qualitative_result(self, stock_code: str, analysis_type: str) -> Optional[Dict[str, Any]]:
+        """从缓存读取定性分析结果。"""
+        return self.cache.read_qualitative_result(stock_code, analysis_type)
 
     def close(self):
         self.bs_fetcher.logout()
