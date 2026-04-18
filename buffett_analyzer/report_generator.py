@@ -30,6 +30,10 @@ class ReportGenerator:
 
     def run(self) -> str:
         """执行完整报告生成流程，返回保存的文件路径。"""
+        # 0. 预收集：确保定性缓存已填充（供 moat / business_model / valuation 复用）
+        self.collector.collect_enhanced(self.stock_code)
+        self.collector.collect_qualitative(self.stock_code)
+
         # 1. 运行所有分析模块
         reports = self._run_analyzers()
 
@@ -66,9 +70,6 @@ class ReportGenerator:
 
     def _load_supplemental_data(self):
         """加载财务 DataFrame、估值数据、公司名称。"""
-        # 确保数据已收集
-        self.collector.collect_enhanced(self.stock_code)
-
         df_fin = self.cache.read_financial_reports(self.stock_code)
         val_data = self.cache.read_valuation(self.stock_code) or {}
         company_name = self._get_company_name()
