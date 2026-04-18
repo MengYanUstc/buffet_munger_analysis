@@ -217,6 +217,29 @@ class ReportGenerator:
             return default
         return fmt.format(val)
 
+    @staticmethod
+    def _debt_ratio_range_desc(industry_type: str) -> str:
+        """根据行业类型返回资产负债率合理区间的描述。"""
+        thresholds = {
+            "general":     [(30, "低"), (50, "中等"), (70, "较高"), (float('inf'), "过高")],
+            "banking":     [(85, "低"), (90, "中等"), (93, "较高"), (float('inf'), "过高")],
+            "insurance":   [(80, "低"), (85, "中等"), (90, "较高"), (float('inf'), "过高")],
+            "real_estate": [(60, "低"), (70, "中等"), (80, "较高"), (float('inf'), "过高")],
+            "utilities":   [(50, "低"), (60, "中等"), (70, "较高"), (float('inf'), "过高")],
+        }
+        levels = thresholds.get(industry_type, thresholds["general"])
+        parts = []
+        prev = 0
+        for threshold, desc in levels:
+            if prev == 0:
+                parts.append(f"≤{threshold}%为{desc}负债")
+            elif threshold == float('inf'):
+                parts.append(f">{prev}%为{desc}负债")
+            else:
+                parts.append(f"{prev}%-{threshold}%为{desc}负债")
+            prev = threshold
+        return "；".join(parts)
+
     # ===== 各章节渲染 =====
 
     def _render_header(self, ctx: Dict[str, Any]) -> str:
@@ -376,9 +399,14 @@ class ReportGenerator:
             "### 资产负债率评分",
             f"- 行业类型：{debt.get('industry_type', 'general')}",
             f"- 资产负债率：{self._safe(debt.get('debt_ratio'), '{}%', '数据暂缺')}",
-            "- 行业合理区间：一般行业 30%-70% 为合理区间",
+            f"- 行业合理区间：{self._debt_ratio_range_desc(debt.get('industry_type', 'general'))}",
             f"- 脚本建议分：{debt.get('suggested_base_score', 0)}/2",
-            f"- AI调整：{debt.get('ai_score', 0) - debt.get('suggested_base_score', 0):+.1f}",
+        ]
+        # AI调整：仅在存在非零调整时显示
+        ai_adj = (debt.get('ai_score') or 0) - (debt.get('suggested_base_score') or 0)
+        if ai_adj != 0:
+            lines.append(f"- AI调整：{ai_adj:+.1f}")
+        lines += [
             f"- 负债率分析：{debt.get('ai_reason') or debt.get('reason') or '数据暂缺'}",
             f"- **最终得分：{debt.get('score', 0)}/2**",
             "",
