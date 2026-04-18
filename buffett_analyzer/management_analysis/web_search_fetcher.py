@@ -116,9 +116,37 @@ class ManagementWebSearchFetcher:
 
         return results
 
+    @staticmethod
+    def _ddgs_safe(timeout=15):
+        """安全实例化 DDGS，抑制 duckduckgo_search 弃用警告。"""
+        import warnings as _warnings
+
+        class _DDGSWrapper:
+            def __init__(self, timeout):
+                self._ddgs = None
+                self._timeout = timeout
+
+            def __enter__(self):
+                original_simplefilter = _warnings.simplefilter
+                def _patched_simplefilter(action, category=Warning, lineno=0, append=False):
+                    if action == "always" and category is RuntimeWarning:
+                        return
+                    return original_simplefilter(action, category, lineno, append)
+                _warnings.simplefilter = _patched_simplefilter
+                try:
+                    self._ddgs = DDGS(timeout=self._timeout)
+                finally:
+                    _warnings.simplefilter = original_simplefilter
+                return self._ddgs.__enter__()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return self._ddgs.__exit__(exc_type, exc_val, exc_tb)
+
+        return _DDGSWrapper(timeout)
+
     def search(self, query: str) -> List[Dict[str, str]]:
         """执行单次 DDGS 搜索，返回标题+摘要列表。与 BingWebSearchFetcher 接口对齐。"""
-        with DDGS(timeout=self.timeout) as ddgs:
+        with self._ddgs_safe(self.timeout) as ddgs:
             search_results = list(ddgs.text(query, max_results=self.max_results))
 
         snippets = []

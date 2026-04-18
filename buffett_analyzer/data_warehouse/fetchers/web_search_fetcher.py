@@ -25,6 +25,35 @@ class WebSearchFetcher:
         self.max_results = max_results
         self.timeout = request_timeout
 
+    @staticmethod
+    def _ddgs_safe():
+        """安全实例化 DDGS，抑制 duckduckgo_search 弃用警告。"""
+        import contextlib
+        import warnings as _warnings
+
+        class _DDGSWrapper:
+            def __init__(self):
+                self._ddgs = None
+
+            def __enter__(self):
+                # 临时 monkey-patch warnings.simplefilter，防止 DDGS.__init__ 中的 "always" 生效
+                original_simplefilter = _warnings.simplefilter
+                def _patched_simplefilter(action, category=Warning, lineno=0, append=False):
+                    if action == "always" and category is RuntimeWarning:
+                        return  # 忽略 DDGS.__init__ 中的 always 设置
+                    return original_simplefilter(action, category, lineno, append)
+                _warnings.simplefilter = _patched_simplefilter
+                try:
+                    self._ddgs = DDGS()
+                finally:
+                    _warnings.simplefilter = original_simplefilter
+                return self._ddgs.__enter__()
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return self._ddgs.__exit__(exc_type, exc_val, exc_tb)
+
+        return _DDGSWrapper()
+
     def fill_missing(self, stock_code: str, stock_name: str, missing_fields: List[str]) -> Dict[str, Any]:
         """
         对缺失字段执行联网搜索并尝试提取数值。
@@ -62,7 +91,7 @@ class WebSearchFetcher:
             for kw in keywords:
                 query = f"{stock_name} {stock_code} {kw}"
                 try:
-                    with DDGS() as ddgs:
+                    with self._ddgs_safe() as ddgs:
                         search_results = list(ddgs.text(query, max_results=self.max_results))
                 except Exception as e:
                     notes.append(f"DDGS搜索失败 ({field}, {kw}): {e}")

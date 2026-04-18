@@ -24,6 +24,7 @@ from buffett_analyzer.moat_analysis import MoatAnalyzer
 from buffett_analyzer.business_model_analysis import BusinessModelAnalyzer
 from buffett_analyzer.valuation import ValuationAnalyzer
 from buffett_analyzer.data_warehouse import DataCollector
+from buffett_analyzer.report_generator import ReportGenerator
 
 
 def parse_manual_fields(field_strs):
@@ -83,8 +84,20 @@ def main():
     parser.add_argument("--fill-valuation", nargs="+", metavar="FIELD=VALUE",
                         help="手动填补估值字段，如 pe_percentile_5y=35.0 pb_percentile_5y=20.0")
 
+    # 报告生成
+    parser.add_argument("--report", action="store_true",
+                        help="生成深度分析报告（Markdown），保存到 reports/ 目录")
+
     args = parser.parse_args()
     collector = DataCollector()
+
+    # 0. 报告生成模式（最高优先级）
+    if args.report:
+        generator = ReportGenerator(args.code, industry_type=args.industry, source=args.source)
+        file_path = generator.run()
+        collector.close()
+        print(f"深度分析报告已生成: {file_path}")
+        return
 
     # 1. 手动填充估值
     if args.fill_valuation:
