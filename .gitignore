@@ -46,5 +46,8 @@ data/
 test_*.json
 *.log
 
+# Generated reports
+reports/
+
 # Portable tools
 tools/
