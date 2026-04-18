@@ -1,5 +1,5 @@
 """
-ROE 稳定性评分插件 —— 定量基础分 + AI 定性调整
+ROE 稳定性评分插件 —— 完全定量评分
 """
 
 from typing import Dict, Any
@@ -12,7 +12,7 @@ class RoeStabilityPlugin(ScoringPlugin):
     dimension_id = "roe_stability"
     name = "ROE稳定性"
     max_score = 2.0
-    score_type = ScoringType.AI_BASED
+    score_type = ScoringType.QUANTITATIVE_ONLY
     step = 0.5
 
     def compute(self, context: Dict[str, Any]) -> ScoringResult:
@@ -23,7 +23,7 @@ class RoeStabilityPlugin(ScoringPlugin):
         return ScoringResult(
             dimension_id=self.dimension_id,
             name=self.name,
-            score=penalty_score,  # 占位，最终由 Engine 回填
+            score=penalty_score,
             max_score=self.max_score,
             score_type=self.score_type,
             base_score=base_score,
@@ -49,5 +49,5 @@ class RoeStabilityPlugin(ScoringPlugin):
         return (
             "基础分由标准差决定：σ≤3 为 2.0 分，σ≤5 为 1.5 分，σ≤7 为 1.0 分，σ≤9 为 0.5 分，>9 为 0 分。\n"
             "趋势强制规则：明显上升 +0.5，温和上升/基本稳定 +0.0，温和下降 -0.5，明显下降 -1.0。\n"
-            "AI 在 penalty_score 基础上根据行业特性进行 ±0.5 分的最终微调，步长 0.5。"
+            "最终得分 = 基础分 + 趋势惩罚，范围 [0, 2]，步长 0.5。"
         )

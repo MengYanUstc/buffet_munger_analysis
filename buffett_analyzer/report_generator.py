@@ -240,6 +240,42 @@ class ReportGenerator:
             prev = threshold
         return "；".join(parts)
 
+    @staticmethod
+    def _roe_stability_reason(roe_stab: Dict[str, Any]) -> str:
+        """组装 ROE 稳定性定量分析说明。"""
+        if roe_stab.get("error"):
+            return roe_stab["error"]
+        base = roe_stab.get("suggested_base_score", 0)
+        penalty = roe_stab.get("trend_penalty", 0)
+        trend = roe_stab.get("trend_direction", "")
+        stability = roe_stab.get("stability_level", "")
+        std = roe_stab.get("roe_std")
+        parts = [f"ROE标准差{std}，稳定性为'{stability}'，基础分{base}/2"]
+        if penalty != 0:
+            parts.append(f"趋势为'{trend}'，调整{penalty:+.1f}")
+        else:
+            parts.append(f"趋势为'{trend}'，无额外调整")
+        parts.append(f"最终得分{roe_stab.get('score', 0)}/2")
+        return "。".join(parts)
+
+    @staticmethod
+    def _debt_ratio_reason(debt: Dict[str, Any]) -> str:
+        """组装资产负债率定量分析说明。"""
+        ratio = debt.get("debt_ratio")
+        level = debt.get("debt_level", "")
+        score = debt.get("score", 0)
+        industry = debt.get("industry_type", "general")
+        if ratio is None:
+            return "数据暂缺"
+        desc = {
+            "general": "一般行业",
+            "banking": "银行业",
+            "insurance": "保险业",
+            "real_estate": "房地产业",
+            "utilities": "公用事业",
+        }.get(industry, industry)
+        return f"{desc}资产负债率{ratio}%，处于'{level}'负债水平，对应基础分{debt.get('suggested_base_score', 0)}/2，最终得分{score}/2。"
+
     # ===== 各章节渲染 =====
 
     def _render_header(self, ctx: Dict[str, Any]) -> str:
@@ -370,12 +406,15 @@ class ReportGenerator:
             "- ROE与行业对比：数据暂缺",
             f"- **最终得分：{roe.get('score', 0)}/4**",
             "",
-            "### ROE稳定性评分（⚠️ 定性判断）",
+            "### ROE稳定性评分（✅ 完全定量）",
             f"- 5年平均ROE：{self._safe(roe_stab.get('roe_mean'), '{}%', '数据暂缺')}",
             f"- ROE标准差：{self._safe(roe_stab.get('roe_std'), '{}', '数据暂缺')}",
-            f"- 脚本建议分：{roe_stab.get('penalty_score', 0)}/2",
-            f"- 最终得分：{roe_stab.get('score', 0)}/2（评分阶段已确定，报告阶段不可修改）",
-            f"- 得分说明：{roe_stab.get('ai_reason') or roe_stab.get('reason') or '数据暂缺'}",
+            f"- 稳定性级别：{roe_stab.get('stability_level', '数据暂缺')}",
+            f"- 趋势方向：{roe_stab.get('trend_direction', '数据暂缺')}",
+            f"- 基础分（由标准差决定）：{roe_stab.get('suggested_base_score', 0)}/2",
+            f"- 趋势调整：{roe_stab.get('trend_penalty', 0):+.1f}",
+            f"- **最终得分：{roe_stab.get('score', 0)}/2**",
+            f"- 得分说明：{self._roe_stability_reason(roe_stab)}",
             "",
             "### ROIC评分（✅ 完全定量）",
             f"- 5年平均ROIC：{self._safe(roic.get('avg_roic'), '{}%', '数据暂缺')}",
@@ -401,13 +440,7 @@ class ReportGenerator:
             f"- 资产负债率：{self._safe(debt.get('debt_ratio'), '{}%', '数据暂缺')}",
             f"- 行业合理区间：{self._debt_ratio_range_desc(debt.get('industry_type', 'general'))}",
             f"- 脚本建议分：{debt.get('suggested_base_score', 0)}/2",
-        ]
-        # AI调整：仅在存在非零调整时显示
-        ai_adj = (debt.get('ai_score') or 0) - (debt.get('suggested_base_score') or 0)
-        if ai_adj != 0:
-            lines.append(f"- AI调整：{ai_adj:+.1f}")
-        lines += [
-            f"- 负债率分析：{debt.get('ai_reason') or debt.get('reason') or '数据暂缺'}",
+            f"- 负债率分析：{self._debt_ratio_reason(debt)}",
             f"- **最终得分：{debt.get('score', 0)}/2**",
             "",
             f"**企业质量总分：{q.get('total_score', 0)}/20分**",

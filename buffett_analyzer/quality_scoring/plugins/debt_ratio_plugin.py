@@ -1,5 +1,5 @@
 """
-资产负债率评分插件 —— 定量基础分 + AI 定性调整
+资产负债率评分插件 —— 完全定量评分
 """
 
 from typing import Dict, Any
@@ -12,7 +12,7 @@ class DebtRatioPlugin(ScoringPlugin):
     dimension_id = "debt_ratio"
     name = "资产负债率"
     max_score = 2.0
-    score_type = ScoringType.AI_BASED
+    score_type = ScoringType.QUANTITATIVE_ONLY
     step = 0.5
 
     def compute(self, context: Dict[str, Any]) -> ScoringResult:
@@ -43,6 +43,9 @@ class DebtRatioPlugin(ScoringPlugin):
 
     def get_rubric(self) -> str:
         return (
-            "基础分由负债率区间决定（通用行业）：≤30% 为 2.0 分，≤50% 为 1.5 分，≤70% 为 1.0 分，>70% 为 0 分。\n"
-            "AI 在此基础上根据有息负债占比、现金流覆盖能力、行业特性进行 ±0.5 分的调整，步长 0.5。"
+            "基础分由负债率区间决定：\n"
+            "  general（一般行业）：≤30% 为 2.0 分，≤50% 为 1.5 分，≤70% 为 1.0 分，>70% 为 0 分\n"
+            "  banking（银行）：≤85% 为 2.0 分，≤90% 为 1.5 分，≤93% 为 1.0 分，>93% 为 0 分\n"
+            "  real_estate（地产）：≤60% 为 2.0 分，≤70% 为 1.5 分，≤80% 为 1.0 分，>80% 为 0 分\n"
+            "最终得分 = 基础分，范围 [0, 2]，步长 0.5。"
         )

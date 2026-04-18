@@ -1,6 +1,6 @@
 """
 企业质量分析主模块（已适配 AnalyzerBase 统一接口）
-整合数据获取、定量计算、AI 定性评分输出。
+整合数据获取、定量计算输出。
 """
 
 from typing import Dict, Any
@@ -113,14 +113,17 @@ class QualityAnalyzer(AnalyzerBase):
             + (profit_res.score if profit_res else 0.0),
             2,
         )
-        ai_score = round(
-            (roe_stab_res.score if roe_stab_res else 0.0)
+        total_score = round(
+            (roe_res.score if roe_res else 0.0)
+            + (roic_res.score if roic_res else 0.0)
+            + (revenue_res.score if revenue_res else 0.0)
+            + (profit_res.score if profit_res else 0.0)
+            + (roe_stab_res.score if roe_stab_res else 0.0)
             + (debt_res.score if debt_res else 0.0),
             2,
         )
-        total_score = round(script_score + ai_score, 2)
 
-        # 兼容旧格式：roe_stability 和 debt_ratio 保留原有分析字段，并叠加 ai_score
+        # roe_stability 和 debt_ratio 为完全定量评分
         roe_stability_output = {}
         if len(roe_values) >= 4:
             roe_stability_output = analyze_roe_stability(roe_values)
@@ -130,9 +133,6 @@ class QualityAnalyzer(AnalyzerBase):
                 "roe_values": [round(x, 2) for x in roe_values]
             }
         if roe_stab_res:
-            roe_stability_output["ai_score"] = roe_stab_res.score
-            roe_stability_output["ai_reason"] = roe_stab_res.reason
-            # 统一暴露 score 字段，方便前端/报表直接读取
             roe_stability_output["score"] = roe_stab_res.score
         else:
             roe_stability_output["score"] = roe_stability_output.get("penalty_score", 0.0)
@@ -141,9 +141,6 @@ class QualityAnalyzer(AnalyzerBase):
         if debt_ratio is not None:
             debt_analysis_output = analyze_debt_ratio(debt_ratio, self.industry_type)
         if debt_res:
-            debt_analysis_output["ai_score"] = debt_res.score
-            debt_analysis_output["ai_reason"] = debt_res.reason
-            # 统一暴露 score 字段，方便前端/报表直接读取
             debt_analysis_output["score"] = debt_res.score
         else:
             debt_analysis_output["score"] = debt_analysis_output.get("suggested_base_score", 0.0)
@@ -177,8 +174,8 @@ class QualityAnalyzer(AnalyzerBase):
         }
 
         summary = {
-            "script_calculated_score": script_score,
-            "ai_qualitative_score": ai_score,
+            "script_calculated_score": total_score,
+            "ai_qualitative_score": 0.0,
             "current_total": total_score,
             "max_possible_total": total_score,
             "full_score": 20.0,
