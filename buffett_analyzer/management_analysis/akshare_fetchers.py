@@ -160,25 +160,6 @@ class AkshareNoticeFetcher(AkshareBaseFetcher):
         return result
 
 
-class AkshareHoldingsFetcher(AkshareBaseFetcher):
-    """高管/董监高持股变动：当前 akshare 接口 stock_ggcg_em 为全市场拉取，性能极差且易超时，
-    因此暂时禁用，由 TopSites / WebSearch 层补充。
-    """
-
-    def fetch(self, stock_code: str, top_n: int = 20) -> Dict[str, Any]:
-        return {}
-
-    def _try_ggcg(self, ak, stock_code: str, top_n: int) -> List[Dict[str, Any]]:
-        return []
-
-    def _try_share_hold_change(self, ak, stock_code: str, top_n: int) -> List[Dict[str, Any]]:
-        return []
-
-    @staticmethod
-    def _find_code_column(columns) -> Optional[str]:
-        return None
-
-
 class AkshareDividendFetcher(AkshareBaseFetcher):
     """历史分红数据：stock_dividents_cninfo / stock_dividend_cninfo"""
 
@@ -218,7 +199,6 @@ class AkshareCompositeFetcher(AkshareBaseFetcher):
     def __init__(self):
         self.news = AkshareNewsFetcher()
         self.notice = AkshareNoticeFetcher()
-        self.holdings = AkshareHoldingsFetcher()
         self.dividend = AkshareDividendFetcher()
 
     def fetch_all(self, stock_code: str) -> Dict[str, Any]:
@@ -238,12 +218,7 @@ class AkshareCompositeFetcher(AkshareBaseFetcher):
         if dividend_res:
             result["dividend"] = dividend_res["dividend"]
 
-        # 2. 高管持股变动
-        holdings_res = self.holdings.fetch(stock_code)
-        if holdings_res:
-            result["management_holdings"] = holdings_res["management_holdings"]
-
-        # 3. 新闻（覆盖分红/并购/违规/持股变动）
+        # 2. 新闻（覆盖分红/并购/违规/持股变动）
         news_res = self.news.fetch(stock_code)
         for key in ["dividend", "mergers", "violations", "management_holdings"]:
             if key in news_res:

@@ -15,17 +15,7 @@ from .llm_client import LLMClient
 from .coze_client import CozeLLMClient
 from .prompt_builder import PromptBuilder
 
-# 默认 Coze Token（硬编码，避免环境变量未设置导致 LLM 调用失败）
-_DEFAULT_COZE_TOKEN = (
-    "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9."
-    "eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0s"
-    "ImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDQyOTkyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9h"
-    "ZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3"
-    "NjI5NzY0NTU0OTMwNTIwMDc5In0.QbMFDYUoLq3THYtMVq7Gby2wxvYpE56O2601FthUlNyY33Kq8cSBjRcuT_zeQXnM5AbD"
-    "LXK_CbpDqP02374c_7uFaHXso5j2fIe6Ao2ixONXz-Sef3jSZoyjeTT2T2-DGgeW8RkeVAB6TDmLMCOjmHWRlvBqgsUL0paHV"
-    "dfvJbYyOHSiYEVtwVdgsZhU6UTMChBE4uPQUGnCci_V_niHU2ARUBnSC1rqDVaHq3cOf6LxtlhlKQInm9bt4CZCyH6WrLf2Gb"
-    "kRRu5mpqbKXM-dZAPPBrXLzN6brQiocCR90URaVqGfNMyQtQHwlSulSYV1iNYpCLDYQVYybiLcL_k2Qw"
-)
+from ..utils.constants import DEFAULT_COZE_API_TOKEN
 
 
 class AiScoringEngine:
@@ -41,7 +31,7 @@ class AiScoringEngine:
             self.llm = llm_client
         else:
             # 优先使用 CozeLLMClient（token 已硬编码），避免 LLM_API_KEY 未配置问题
-            coze = CozeLLMClient(api_token=_DEFAULT_COZE_TOKEN)
+            coze = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
             if coze.is_configured():
                 self.llm = coze
             else:

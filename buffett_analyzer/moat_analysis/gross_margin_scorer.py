@@ -75,7 +75,7 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
 
     规则：
       - 基础分由标准差决定（0-4 分）
-      - 趋势调整 ±0.5（明显上升+0.5，明显下降-0.5，其他不变）
+      - 趋势调整：明显上升+2，温和上升+1，温和下降-0.5，明显下降-1.5
       - 最终分限制在 [0, 4]
 
     Returns:
@@ -102,16 +102,16 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
     base_score = calculate_gross_margin_stability_score(std)
     trend = calculate_gross_margin_trend(gross_margin_values)
 
-    # 趋势调整（新规则：温和上升+0.5，明显上升+1，温和下降-0.5，明显下降-1）
+    # 趋势调整（折中方案：明显上升+2，温和上升+1，温和下降-0.5，明显下降-1.5）
     trend_adj = 0.0
     if trend["trend_direction"] == "明显上升":
-        trend_adj = 1.0
+        trend_adj = 2.0
     elif trend["trend_direction"] == "温和上升":
-        trend_adj = 0.5
+        trend_adj = 1.0
     elif trend["trend_direction"] == "温和下降":
         trend_adj = -0.5
     elif trend["trend_direction"] == "明显下降":
-        trend_adj = -1.0
+        trend_adj = -1.5
 
     final_score = round(max(0.0, min(4.0, base_score + trend_adj)) * 2) / 2
 

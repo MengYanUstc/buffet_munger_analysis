@@ -7,15 +7,13 @@ import pandas as pd
 import akshare as ak
 from typing import Dict, Any, Optional
 
+from ...utils import is_hk_stock
+
 
 class IndustryFetcher:
-    @staticmethod
-    def _is_hk_stock(code: str) -> bool:
-        return len(code) == 5 and code.isdigit() and code.startswith('0')
-
     def fetch(self, stock_code: str) -> Dict[str, Any]:
         """入口：自动识别A股/港股，获取行业估值。"""
-        if self._is_hk_stock(stock_code):
+        if is_hk_stock(stock_code):
             return self._fetch_hk(stock_code)
         return self._fetch_a_share(stock_code)
 

@@ -218,19 +218,14 @@ class ReportGenerator:
         return fmt.format(val)
 
     @staticmethod
+    @staticmethod
     def _debt_ratio_range_desc(industry_type: str) -> str:
         """根据行业类型返回资产负债率合理区间的描述。"""
-        thresholds = {
-            "general":     [(30, "低"), (50, "中等"), (70, "较高"), (float('inf'), "过高")],
-            "banking":     [(85, "低"), (90, "中等"), (93, "较高"), (float('inf'), "过高")],
-            "insurance":   [(80, "低"), (85, "中等"), (90, "较高"), (float('inf'), "过高")],
-            "real_estate": [(60, "低"), (70, "中等"), (80, "较高"), (float('inf'), "过高")],
-            "utilities":   [(50, "低"), (60, "中等"), (70, "较高"), (float('inf'), "过高")],
-        }
-        levels = thresholds.get(industry_type, thresholds["general"])
+        from .utils.common import DEBT_RATIO_THRESHOLDS
+        levels = DEBT_RATIO_THRESHOLDS.get(industry_type, DEBT_RATIO_THRESHOLDS["general"])
         parts = []
         prev = 0
-        for threshold, desc in levels:
+        for threshold, _score, desc in levels:
             if prev == 0:
                 parts.append(f"≤{threshold}%为{desc}负债")
             elif threshold == float('inf'):
@@ -399,7 +394,7 @@ class ReportGenerator:
             "",
             f"**质量评级**：{q.get('rating', '未评级')}",
             "",
-            "### ROE评分",
+            "### ROE评分（✅ 完全定量）",
             f"- 5年平均ROE：{self._safe(roe.get('avg_roe'), '{}%', '数据暂缺')}",
             f"- 各年份ROE：{self._fmt_chain(records, 'roe', '%')}",
             "- ROE趋势分析：" + ("ROE 整体稳定" if roe.get('avg_roe', 0) >= 15 else "ROE 水平一般，需关注盈利能力持续性。"),
@@ -429,17 +424,17 @@ class ReportGenerator:
             "- 营收增长分析：" + ("营收保持较快增长，业务扩张势头良好。" if rev.get('score', 0) >= 2 else "营收增长放缓，需关注增长动力。" if rev.get('score', 0) >= 1 else "营收增长乏力，业务面临增长瓶颈。"),
             f"- **最终得分：{rev.get('score', 0)}/3**",
             "",
-            "### 扣非净利润增长评分",
+            "### 扣非净利润增长评分（✅ 完全定量）",
             f"- 扣非净利润CAGR：{self._safe(prof.get('cagr'), '{}%', '数据暂缺')}",
             f"- 各年份扣非净利润：{self._fmt_chain(records, 'deduct_net_profit', '亿')}",
             "- 利润增长分析：" + ("利润增长稳健，盈利质量较好。" if prof.get('score', 0) >= 2 else "利润增长承压，需关注盈利质量。"),
             f"- **最终得分：{prof.get('score', 0)}/3**",
             "",
-            "### 资产负债率评分",
+            "### 资产负债率评分（✅ 完全定量）",
             f"- 行业类型：{debt.get('industry_type', 'general')}",
             f"- 资产负债率：{self._safe(debt.get('debt_ratio'), '{}%', '数据暂缺')}",
             f"- 行业合理区间：{self._debt_ratio_range_desc(debt.get('industry_type', 'general'))}",
-            f"- 脚本建议分：{debt.get('suggested_base_score', 0)}/2",
+            f"- 基础分（按行业阈值）：{debt.get('suggested_base_score', 0)}/2",
             f"- 负债率分析：{self._debt_ratio_reason(debt)}",
             f"- **最终得分：{debt.get('score', 0)}/2**",
             "",
@@ -471,54 +466,34 @@ class ReportGenerator:
             "",
             f"**护城河评级**：{moat.get('rating', '未评级')}",
             "",
-            "### 护城河类型识别",
-            "- 识别出的护城河类型：品牌、渠道、成本优势、技术优势",
-            "",
-            "#### 护城河1：品牌护城河",
-            f"- 强度：{'强' if mt.get('score', 0) >= 5 else '中' if mt.get('score', 0) >= 3.5 else '弱'}",
-            f"- 详细说明：{mt.get('reason', '数据暂缺')[:200]}...",
-            "- 典型特征体现：品牌知名度高、客户忠诚度高、定价能力强",
-            "",
+            "### 护城河类型识别（⚠️ 定性判断）",
             f"- 护城河强度综合判断：{'强' if mt.get('score', 0) >= 5 else '中' if mt.get('score', 0) >= 3.5 else '弱'}",
+            f"- 护城河分析：{mt.get('reason', '数据暂缺')}",
             f"- **最终得分：{mt.get('score', 0)}/7**",
             "",
-            "### 护城河可持续性",
+            "### 护城河可持续性（⚠️ 定性判断）",
             f"- 可持续性等级：{'极高' if ms.get('score', 0) >= 6 else '高' if ms.get('score', 0) >= 4.5 else '中等' if ms.get('score', 0) >= 3 else '低'}",
-            "",
-            "#### 维度1：历史时长",
-            "- 评估：公司已积累较长时间的市场经验",
-            f"- 分析：{ms.get('reason', '数据暂缺')[:150]}...",
-            "",
-            "#### 维度2：趋势",
-            f"- 评估：{'护城河加强' if ms.get('score', 0) >= mt.get('score', 0) else '护城河稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '护城河削弱'}",
-            f"- 分析：{ms.get('reason', '数据暂缺')[150:300] if len(ms.get('reason', '')) > 150 else '数据暂缺'}...",
-            "",
+            f"- 护城河趋势对比：{'加强' if ms.get('score', 0) >= mt.get('score', 0) else '稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '削弱'}",
+            f"- 可持续性分析：{ms.get('reason', '数据暂缺')}",
             f"- **最终得分：{ms.get('score', 0)}/7**",
             "",
-            "### 行业评分",
-            f"- 行业集中度：{'极高' if iq.get('score', 0) >= 5 else '中高' if iq.get('score', 0) >= 3.5 else '中等'}",
-            "- 行业成长性：数据暂缺",
-            "- 行业进入壁垒：数据暂缺",
-            "- 需求稳定性：数据暂缺",
-            f"- 行业竞争格局分析：{iq.get('reason', '数据暂缺')[:200]}...",
+            "### 行业评分（⚠️ 定性判断）",
+            f"- 行业质量综合判断：{'极高' if iq.get('score', 0) >= 5 else '中高' if iq.get('score', 0) >= 3.5 else '中等' if iq.get('score', 0) >= 2 else '较低'}",
+            f"- 行业深度分析：{iq.get('reason', '数据暂缺')}",
             f"- **最终得分：{iq.get('score', 0)}/6**",
             "",
-            "### 定价权评估",
+            "### 定价权评估（⚠️ 定性判断）",
             f"- 定价权等级：{'强' if pp.get('score', 0) >= 4.5 else '中' if pp.get('score', 0) >= 3 else '弱'}",
-            "",
-            "#### 维度1：提价历史",
-            "- 评估：数据暂缺",
-            "- 分析：数据暂缺",
-            "",
+            f"- 定价权分析：{pp.get('reason', '数据暂缺')}",
             f"- **最终得分：{pp.get('score', 0)}/6**",
             "",
-            "### 毛利率稳定性",
+            "### 毛利率稳定性评分（✅ 完全定量）",
             f"- 毛利率标准差：{self._safe(gm.get('std'), '{}%', '数据暂缺')}",
             f"- 稳定性级别：{'极稳定' if gm.get('score', 0) >= 3.5 else '高度稳定' if gm.get('score', 0) >= 3 else '较稳定' if gm.get('score', 0) >= 2 else '一般'}",
             f"- 趋势方向：{gm.get('trend_direction', '数据暂缺')}",
             f"- 各年份毛利率：{self._fmt_chain(records, 'gross_margin', '%')}",
-            f"- 脚本建议分：{gm.get('base_score', 0)}/4",
-            f"- AI调整：{gm.get('trend_adjustment', 0):+.1f}",
+            f"- 基础分（由标准差决定）：{gm.get('base_score', 0)}/4",
+            f"- 趋势调整：{gm.get('trend_adjustment', 0):+.1f}",
             f"- 毛利率稳定性分析：{gm.get('reason', '数据暂缺')}",
             f"- **最终得分：{gm.get('score', 0)}/4**",
             "",
@@ -546,35 +521,28 @@ class ReportGenerator:
         lines = [
             f"## 五、商业模式分析（{bm.get('total_score', 0)}/20分）",
             "",
-            "### 自由现金流质量",
+            "### 自由现金流质量（✅ 完全定量）",
             f"- 行业类型：{capex.get('industry_type', 'medium')}",
             f"- 5年平均FCF转化率：{self._safe(fcf_q.get('fcf_ratio'), '{}', '数据暂缺')}",
             f"- 各年份FCF：{self._fmt_chain(records, 'fcf', '亿')}",
-            f"- 脚本基础分：{self._safe(fcf_q.get('base_score'), '{:.1f}', '数据暂缺')}/6",
+            f"- 基础分：{self._safe(fcf_q.get('base_score'), '{:.1f}', '数据暂缺')}/6",
             f"- 自由现金流分析：{fcf_q.get('reason', '数据暂缺')}",
             f"- **最终得分：{fcf_q.get('score', 0)}/6**",
             "",
-            "### 资本开支",
+            "### 资本开支（✅ 完全定量）",
             f"- 行业类型：{capex.get('industry_type', 'medium')}",
             f"- 5年平均CapEx/净利润：{self._safe(capex.get('avg_capex_ratio'), '{}%', '数据暂缺')}",
             f"- 各年份CapEx：{self._fmt_chain(records, 'capex', '亿')}",
-            f"- 脚本基础分：{capex.get('base_score', 0)}/4",
+            f"- 基础分：{capex.get('base_score', 0)}/4",
             f"- 资本开支分析：{capex.get('reason', '数据暂缺')}",
             f"- **最终得分：{capex.get('score', 0)}/4**",
             "",
-            "### 收入稳定性",
-            "- 收入稳定性分析：" + inc_stab.get("reason", "数据暂缺")[:200] + "...",
-            "- 前五大客户占比：数据暂缺",
-            "- 客户集中度分析：数据暂缺",
+            "### 收入稳定性（⚠️ 定性判断）",
+            f"- 收入稳定性分析：{inc_stab.get('reason', '数据暂缺')}",
             f"- **最终得分：{inc_stab.get('score', 0)}/5**",
             "",
-            "### 商业模式质量",
-            "- 赚钱逻辑清晰度：数据暂缺",
-            "- 盈利能力：数据暂缺",
-            "- 可复制性：数据暂缺",
-            "- 规模化能力：数据暂缺",
-            "- 抗风险能力：数据暂缺",
-            f"- 商业模式深度分析：{bm_qual.get('reason', '数据暂缺')[:200]}...",
+            "### 商业模式质量（⚠️ 定性判断）",
+            f"- 商业模式分析：{bm_qual.get('reason', '数据暂缺')}",
             f"- **最终得分：{bm_qual.get('score', 0)}/5**",
             "",
             f"**商业模式总分：{bm.get('total_score', 0)}/20分**",
@@ -599,19 +567,12 @@ class ReportGenerator:
         lines = [
             f"## 六、管理层分析（{mg.get('total_score', 0)}/10分）",
             "",
-            "### 资本配置能力评分",
-            "- ROIC表现：数据暂缺",
-            "- 分红政策：数据暂缺",
-            "- 并购与扩张：数据暂缺",
-            "- 股权质押：数据暂缺",
-            f"- 资本配置分析：{ca.get('reason', '数据暂缺')[:150]}...",
+            "### 资本配置能力评分（⚠️ 定性判断）",
+            f"- 资本配置分析：{ca.get('reason', '数据暂缺')}",
             f"- **最终得分：{ca.get('score', 0)}/6**",
             "",
-            "### 管理层诚信评分",
-            "- 违规与诚信问题：数据暂缺",
-            "- 减持行为：数据暂缺",
-            "- 治理结构：数据暂缺",
-            f"- 诚信分析：{integrity.get('reason', '数据暂缺')[:150]}...",
+            "### 管理层诚信评分（⚠️ 定性判断）",
+            f"- 诚信分析：{integrity.get('reason', '数据暂缺')}",
             f"- **最终得分：{integrity.get('score', 0)}/4**",
             "",
             "### 一票否决检查",
@@ -654,20 +615,20 @@ class ReportGenerator:
         lines = [
             f"## 七、估值分析（{val.get('total_score', 0)}/20分）",
             "",
-            "### 绝对估值水平",
+            "### 绝对估值水平（✅ 完全定量）",
             f"- PE（市盈率）：{self._safe(abs_v.get('pe'), '{:.1f}倍', '数据暂缺')}",
             f"- PB（市净率）：{self._safe(abs_v.get('pb'), '{:.1f}倍', '数据暂缺')}",
             f"- PS（市销率）：{self._safe(abs_v.get('ps'), '{:.1f}倍', '数据暂缺')}",
             "- 绝对估值深度分析：当前估值水平" + ("处于合理区间" if abs_v.get('score', 0) >= 4 else "偏高" if abs_v.get('score', 0) <= 2 else "适中") + "。",
             f"- **最终得分：{abs_v.get('score', 0)}/6**",
             "",
-            "### 相对估值",
+            "### 相对估值（✅ 完全定量）",
             f"- 历史估值分位：{self._safe(rel_v.get('pe_percentile_5y'), '{:.1f}%', '数据暂缺')}",
             f"- 相对行业比率：{self._safe(rel_v.get('pe_vs_industry'), '{:.2f}', '数据暂缺')}",
             "- 相对估值深度分析：" + ("当前估值处于历史较低分位，具备相对安全边际。" if rel_v.get('score', 0) >= 2 else "当前估值处于历史中高分位，需关注相对估值风险。"),
             f"- **最终得分：{rel_v.get('score', 0)}/4**",
             "",
-            "### DCF安全边际",
+            "### DCF安全边际（✅ 完全定量）",
             "- DCF测算关键假设：",
         ]
         if dcf_params:
@@ -697,7 +658,7 @@ class ReportGenerator:
         lines.append(f"- DCF安全边际分析：{dcf.get('reason', '数据暂缺')}")
         lines.append(f"- **最终得分：{dcf.get('score', 0)}/4**")
         lines.append("")
-        lines.append("### 长期PEG")
+        lines.append("### 长期PEG（✅ 完全定量）")
         if peg.get("peg") is not None:
             lines.append(f"- PEG：{peg['peg']:.2f}")
         else:
@@ -705,7 +666,7 @@ class ReportGenerator:
         lines.append(f"- 长期PEG分析：{peg.get('reason', '数据暂缺')}")
         lines.append(f"- **最终得分：{peg.get('score', 0)}/3**")
         lines.append("")
-        lines.append("### 增长确定性")
+        lines.append("### 增长确定性（⚠️ 定性判断）")
         lines.append(f"- 增长确定性：{'高' if growth.get('score', 0) >= 2 else '中等' if growth.get('score', 0) >= 1 else '低'}")
         lines.append(f"- 增长确定性分析：{growth.get('reason', '数据暂缺')[:200]}...")
         lines.append(f"- **最终得分：{growth.get('score', 0)}/3**")

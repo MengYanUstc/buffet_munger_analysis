@@ -21,12 +21,10 @@ import numpy as np
 import akshare as ak
 from typing import Dict, Any
 
+from ...utils import is_hk_stock
+
 
 class AkShareFetcher:
-    @staticmethod
-    def _is_hk_stock(code: str) -> bool:
-        """港股代码通常为5位数字且以0开头（如00700, 09633）。"""
-        return len(code) == 5 and code.isdigit() and code.startswith('0')
 
     @staticmethod
     def _get_exchange(code: str) -> str:
@@ -313,6 +311,6 @@ class AkShareFetcher:
 
     def fetch_financial_data(self, stock_code: str) -> Dict[str, Any]:
         """获取指定股票近7年年报数据，自动识别A股/港股。"""
-        if self._is_hk_stock(stock_code):
+        if is_hk_stock(stock_code):
             return self.fetch_hk_financial_data(stock_code)
         return self.fetch_a_share_financial_data(stock_code)

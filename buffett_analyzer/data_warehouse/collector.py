@@ -14,6 +14,7 @@ from .fetchers.akshare_fetcher import AkShareFetcher
 from .fetchers.baostock_fetcher import BaoStockFetcher
 from .fetchers.industry_fetcher import IndustryFetcher
 from .fetchers.web_search_fetcher import WebSearchFetcher
+from ..utils import is_hk_stock
 
 
 class DataCollector:
@@ -25,14 +26,10 @@ class DataCollector:
         self.industry_fetcher = IndustryFetcher()
         self.web_search_fetcher = WebSearchFetcher()
 
-    @staticmethod
-    def _is_hk_stock(code: str) -> bool:
-        return AkShareFetcher._is_hk_stock(code)
-
     def _get_stock_name(self, stock_code: str) -> str:
         """尝试获取股票简称，用于搜索关键词。"""
         try:
-            if self._is_hk_stock(stock_code):
+            if is_hk_stock(stock_code):
                 df = ak.stock_hk_valuation_comparison_em(symbol=stock_code)
                 if not df.empty:
                     # 第二列通常为名称
@@ -84,7 +81,7 @@ class DataCollector:
             "valuation": None,
             "sources": {}
         }
-        is_hk = self._is_hk_stock(stock_code)
+        is_hk = is_hk_stock(stock_code)
 
         # 1. 财务数据
         if self.cache.has_seven_year_financials(stock_code):
@@ -230,7 +227,7 @@ class DataCollector:
 
         ds = row["data_source"] or ""
         # A股已有 baostock 历史分位，不搜索
-        if not self._is_hk_stock(stock_code):
+        if not is_hk_stock(stock_code):
             return missing
 
         # 港股：若数据源已经是 web_search 或 baostock，视为已满足
@@ -323,12 +320,11 @@ class DataCollector:
         """获取 Coze LLM 客户端实例。"""
         import os
         from ..quality_scoring.coze_client import CozeLLMClient
+        from ..utils.constants import DEFAULT_COZE_API_TOKEN
         token = os.getenv("COZE_API_TOKEN")
         if token:
             return CozeLLMClient(api_token=token)
-        return CozeLLMClient(
-            api_token="eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDQyOTkyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjI5NzY0NTU0OTMwNTIwMDc5In0.QbMFDYUoLq3THYtMVq7Gby2wxvYpE56O2601FthUlNyY33Kq8cSBjRcuT_zeQXnM5AbDLXK_CbpDqP02374c_7uFaHXso5j2fIe6Ao2ixONXz-Sef3jSZoyjeTT2T2-DGgeW8RkeVAB6TDmLMCOjmHWRlvBqgsUL0paHVdfvJbYyOHSiYEVtwVdgsZhU6UTMChBE4uPQUGnCci_V_niHU2ARUBnSC1rqDVaHq3cOf6LxtlhlKQInm9bt4CZCyH6WrLf2GbkRRu5mpqbKXM-dZAPPBrXLzN6brQiocCR90URaVqGfNMyQtQHwlSulSYV1iNYpCLDYQVYybiLcL_k2Qw"
-        )
+        return CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
 
     def collect_moat_qualitative(self, stock_code: str) -> bool:
         """

@@ -135,13 +135,12 @@ class MoatAnalyzer(AnalyzerBase):
 
         # fallback：本地调用 Coze（兼容模式）
         print("[MoatAnalyzer] 缓存未命中，本地调用 Coze LLM...")
+        from ..utils.constants import DEFAULT_COZE_API_TOKEN
         token = os.getenv("COZE_API_TOKEN")
         if token:
             client = CozeLLMClient(api_token=token)
         else:
-            client = CozeLLMClient(
-                api_token="eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDQyOTkyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjI5NzY0NTU0OTMwNTIwMDc5In0.QbMFDYUoLq3THYtMVq7Gby2wxvYpE56O2601FthUlNyY33Kq8cSBjRcuT_zeQXnM5AbDLXK_CbpDqP02374c_7uFaHXso5j2fIe6Ao2ixONXz-Sef3jSZoyjeTT2T2-DGgeW8RkeVAB6TDmLMCOjmHWRlvBqgsUL0paHVdfvJbYyOHSiYEVtwVdgsZhU6UTMChBE4uPQUGnCci_V_niHU2ARUBnSC1rqDVaHq3cOf6LxtlhlKQInm9bt4CZCyH6WrLf2GbkRRu5mpqbKXM-dZAPPBrXLzN6brQiocCR90URaVqGfNMyQtQHwlSulSYV1iNYpCLDYQVYybiLcL_k2Qw"
-            )
+            client = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
         if not client.is_configured():
             return self._empty_qualitative_result("Coze API Token 未配置")
 

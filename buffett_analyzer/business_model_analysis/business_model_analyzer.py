@@ -70,7 +70,6 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 "max_score": 4.0,
                 "base_score": capex_result["base_score"],
                 "stability_adjustment": capex_result["stability_adjustment"],
-                "industry_adjustment": capex_result["industry_adjustment"],
                 "growth_stage_adjustment": capex_result["growth_stage_adjustment"],
                 "raw_score": capex_result["raw_score"],
                 "avg_capex_ratio": capex_result["avg_capex_ratio"],
@@ -158,13 +157,12 @@ class BusinessModelAnalyzer(AnalyzerBase):
             return cached
 
         print("[BusinessModelAnalyzer] 缓存未命中，本地调用 Coze LLM...")
+        from ..utils.constants import DEFAULT_COZE_API_TOKEN
         token = os.getenv("COZE_API_TOKEN")
         if token:
             client = CozeLLMClient(api_token=token)
         else:
-            client = CozeLLMClient(
-                api_token="eyJhbGciOiJSUzI1NiIsImtpZCI6ImZmOTI5ZWIzLWM5NjctNGI5YS05ZGM0LTllMDYwODYxMTU1MCJ9.eyJpc3MiOiJodHRwczovL2FwaS5jb3plLmNuIiwiYXVkIjpbIlE3TFZ0ZkdwZzNEMVVKQ0pmdjhJcU1SdFJna2V1V20zIl0sImV4cCI6ODIxMDI2Njg3Njc5OSwiaWF0IjoxNzc2NDQyOTkyLCJzdWIiOiJzcGlmZmU6Ly9hcGkuY296ZS5jbi93b3JrbG9hZF9pZGVudGl0eS9pZDo3NjE1NTE0NzI0MDkxODIyMTA3Iiwic3JjIjoiaW5ib3VuZF9hdXRoX2FjY2Vzc190b2tlbl9pZDo3NjI5NzY0NTU0OTMwNTIwMDc5In0.QbMFDYUoLq3THYtMVq7Gby2wxvYpE56O2601FthUlNyY33Kq8cSBjRcuT_zeQXnM5AbDLXK_CbpDqP02374c_7uFaHXso5j2fIe6Ao2ixONXz-Sef3jSZoyjeTT2T2-DGgeW8RkeVAB6TDmLMCOjmHWRlvBqgsUL0paHVdfvJbYyOHSiYEVtwVdgsZhU6UTMChBE4uPQUGnCci_V_niHU2ARUBnSC1rqDVaHq3cOf6LxtlhlKQInm9bt4CZCyH6WrLf2GbkRRu5mpqbKXM-dZAPPBrXLzN6brQiocCR90URaVqGfNMyQtQHwlSulSYV1iNYpCLDYQVYybiLcL_k2Qw"
-            )
+            client = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
 
         if not client.is_configured():
             return self._empty_result("Coze API Token 未配置")
@@ -189,8 +187,8 @@ class BusinessModelAnalyzer(AnalyzerBase):
             if df.empty or "capex" not in df.columns or "parent_net_profit" not in df.columns:
                 return {"final_score": None, "reason": "数据库中缺少资本开支或净利润数据"}
 
-            capex_values = df["capex"].dropna().tolist()
-            profit_values = df["parent_net_profit"].dropna().tolist()
+            capex_values = df["capex"].dropna().tail(5).tolist()
+            profit_values = df["parent_net_profit"].dropna().tail(5).tolist()
 
             if len(capex_values) == 0 or len(profit_values) == 0:
                 return {"final_score": None, "reason": "资本开支或净利润数据为空"}
@@ -210,7 +208,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
     def _compute_fcf_quantitative(self) -> Dict[str, Any]:
         """
         从数据库读取自由现金流和净利润数据，计算 FCF 质量评分（6分）。
-        数据流：SQLite → read_financial_reports → 逐年度评分 → 取平均分
+        数据流：SQLite → read_financial_reports → 近5年汇总 → 按总比率直接评分
         """
         try:
             df = self.collector.cache.read_financial_reports(self.stock_code)
@@ -227,40 +225,42 @@ class BusinessModelAnalyzer(AnalyzerBase):
             if profit_col is None:
                 return {"final_score": None, "reason": "数据库中缺少净利润数据"}
 
-            yearly_scores = []
-            yearly_ratios = []
-            for _, row in df.iterrows():
+            # 只取近5年有效数据
+            yearly_records = []
+            for _, row in df.tail(5).iterrows():
                 fcf = row.get("fcf")
                 profit = row.get(profit_col)
                 if pd.notna(fcf) and pd.notna(profit) and profit != 0:
-                    base_score, ratio = _calculate_fcf_score(float(fcf), float(profit))
-                    yearly_scores.append({
+                    ratio = float(fcf) / float(profit)
+                    yearly_records.append({
                         "report_date": str(row.get("report_date", "")),
                         "fcf": round(float(fcf), 2),
                         "net_profit": round(float(profit), 2),
                         "fcf_ratio": round(ratio, 3),
-                        "base_score": base_score,
                     })
-                    yearly_ratios.append(ratio)
 
-            if not yearly_scores:
+            if not yearly_records:
                 return {"final_score": None, "reason": "自由现金流或净利润有效数据为空"}
 
-            # 多年度平均分（满分 6 分）
-            avg_score = sum(s["base_score"] for s in yearly_scores) / len(yearly_scores)
+            # 按5年总FCF / 总净利润 计算总比率，直接评分（不惩罚年度波动）
+            total_fcf = sum(r["fcf"] for r in yearly_records)
+            total_profit = sum(r["net_profit"] for r in yearly_records)
+            base_score, overall_ratio = _calculate_fcf_score(total_fcf, total_profit)
+            final_score = round(base_score, 1)
+
+            yearly_ratios = [r["fcf_ratio"] for r in yearly_records]
             avg_ratio = sum(yearly_ratios) / len(yearly_ratios)
-            final_score = round(avg_score, 1)
 
             reason = (
-                f"共 {len(yearly_scores)} 年数据，FCF/净利润 平均比率={avg_ratio:.2f}，"
-                f"年度平均分={avg_score:.1f}分（满分6分）"
+                f"共 {len(yearly_records)} 年数据，FCF/净利润 总比率={overall_ratio:.2f}，"
+                f"各年比率均值={avg_ratio:.2f}，直接得分={final_score}分（满分6分）"
             )
 
             return {
                 "final_score": final_score,
-                "base_score": avg_score,
-                "fcf_ratio": round(avg_ratio, 3),
-                "yearly_scores": yearly_scores,
+                "base_score": base_score,
+                "fcf_ratio": round(overall_ratio, 3),
+                "yearly_scores": yearly_records,
                 "reason": reason,
             }
         except Exception as e:

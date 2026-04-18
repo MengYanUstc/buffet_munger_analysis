@@ -138,20 +138,15 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     }
 
 
+from .utils.common import DEBT_RATIO_THRESHOLDS
+
+
 def analyze_debt_ratio(ratio: float, industry_type: str = "general") -> Dict[str, Any]:
     """
     资产负债率分析（供AI定性判断，满分2分）。
     根据不同行业的合理负债区间给出建议基础分。
     """
-    thresholds = {
-        "general":     [(30, 2.0, "低"), (50, 1.5, "中等"), (70, 1.0, "较高"), (float('inf'), 0.0, "过高")],
-        "banking":     [(85, 2.0, "低"), (90, 1.5, "中等"), (93, 1.0, "较高"), (float('inf'), 0.0, "过高")],
-        "insurance":   [(80, 2.0, "低"), (85, 1.5, "中等"), (90, 1.0, "较高"), (float('inf'), 0.0, "过高")],
-        "real_estate": [(60, 2.0, "低"), (70, 1.5, "中等"), (80, 1.0, "较高"), (float('inf'), 0.0, "过高")],
-        "utilities":   [(50, 2.0, "低"), (60, 1.5, "中等"), (70, 1.0, "较高"), (float('inf'), 0.0, "过高")],
-    }
-
-    levels = thresholds.get(industry_type, thresholds["general"])
+    levels = DEBT_RATIO_THRESHOLDS.get(industry_type, DEBT_RATIO_THRESHOLDS["general"])
     base_score = 0.0
     level_desc = "过高"
 

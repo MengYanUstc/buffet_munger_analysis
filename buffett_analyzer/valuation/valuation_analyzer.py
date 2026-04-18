@@ -196,7 +196,7 @@ class ValuationAnalyzer(AnalyzerBase):
         if profit_col is None:
             return None
 
-        series = df[profit_col].dropna()
+        series = df[profit_col].dropna().tail(5)
         if len(series) < 2:
             return None
 

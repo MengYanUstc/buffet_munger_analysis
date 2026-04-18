@@ -9,6 +9,7 @@ import pandas as pd
 from typing import Dict, Any, List
 
 from ..data_fetcher import DataFetcher
+from ..utils import is_hk_stock
 from .web_search_fetcher import ManagementWebSearchFetcher
 from .bing_search_fetcher import BingWebSearchFetcher
 from .akshare_fetchers import AkshareCompositeFetcher
@@ -74,7 +75,7 @@ class ManagementDataFetcher:
 
     def fetch_all(self, stock_code: str) -> Dict[str, Any]:
         """汇总管理层分析所需的全部数据。优先使用 akshare 官方接口，缺失时 fallback 到搜索引擎。"""
-        is_hk = self._is_hk_stock(stock_code)
+        is_hk = is_hk_stock(stock_code)
         result = {
             "roic_trend": self.fetch_roic_trend(stock_code, is_hk=is_hk),
             "dividend": self.fetch_dividend(stock_code, is_hk=is_hk),
@@ -158,11 +159,6 @@ class ManagementDataFetcher:
                     result[key]["web_search"] = web_results[key]
 
         return result
-
-    @staticmethod
-    def _is_hk_stock(stock_code: str) -> bool:
-        """判断是否为港股代码（5位数字且以0开头）。"""
-        return len(stock_code) == 5 and stock_code.startswith('0')
 
     # 常见港股名称缓存，避免调用极慢的 akshare 全市场接口
     _HK_NAME_CACHE = {

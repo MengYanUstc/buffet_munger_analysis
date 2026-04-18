@@ -7,25 +7,25 @@
    行业类型不同，阈值分布不同：
 
    轻资产（light）：
-   - < 0.10:   4分（资本效率极高）
-   - 0.10~0.25: 3分
-   - 0.25~0.40: 2分
-   - 0.40~0.55: 1分
-   - ≥ 0.55:   0分
-
-   中等资产（medium）：
-   - < 0.20:   4分
+   - < 0.20:   4分（资本效率极高）
    - 0.20~0.40: 3分
    - 0.40~0.60: 2分
    - 0.60~0.80: 1分
    - ≥ 0.80:   0分
 
-   重资产（heavy）：
+   中等资产（medium）：
    - < 0.30:   4分
    - 0.30~0.50: 3分
    - 0.50~0.70: 2分
    - 0.70~0.90: 1分
    - ≥ 0.90:   0分
+
+   重资产（heavy）：
+   - < 0.40:   4分
+   - 0.40~0.60: 3分
+   - 0.60~0.80: 2分
+   - 0.80~1.00: 1分
+   - ≥ 1.00:   0分
 
 2. 稳定性调整（-1~+1分，0.5步长）：资本开支波动率
    - CV < 0.15: +1.0分（极稳定，规划性强）
@@ -34,15 +34,11 @@
    - CV < 0.75: -0.5分（波动较大）
    - CV ≥ 0.75: -1.0分（波动极大，规划性弱）
 
-3. 行业找补（0~+0.5分）：重资产企业 capex 高是行业特性
-   - heavy: +0.5分
-   - medium / light: 0分
-
-4. 阶段找补（0~+0.5分）：成长期/初创期 capex 高是扩张需要
+3. 阶段找补（0~+0.5分）：成长期/初创期 capex 高是扩张需要
    - growth / startup: +0.5分
    - mature / decline: 0分
 
-最终分 = max(0.0, min(4.0, 基础分 + 稳定性调整 + 行业找补 + 阶段找补))
+最终分 = max(0.0, min(4.0, 基础分 + 稳定性调整 + 阶段找补))
 """
 
 from typing import List, Dict, Any
@@ -50,9 +46,9 @@ import statistics
 
 # 行业类型对应的 capex/净利润 阈值分布
 _INDUSTRY_THRESHOLDS = {
-    "light":  [0.10, 0.25, 0.40, 0.55],   # 轻资产：阈值更严格
-    "medium": [0.20, 0.40, 0.60, 0.80],   # 中等资产：默认阈值
-    "heavy":  [0.30, 0.50, 0.70, 0.90],   # 重资产：阈值更宽松
+    "light":  [0.20, 0.40, 0.60, 0.80],   # 轻资产：严格阈值
+    "medium": [0.30, 0.50, 0.70, 0.90],   # 中等资产：放宽0.1
+    "heavy":  [0.40, 0.60, 0.80, 1.00],   # 重资产：再放宽0.1
 }
 
 
@@ -101,20 +97,16 @@ def compute_capex_score(
     # 3. 稳定性调整（-1~+1分，0.5步长）
     stability_adj = _stability_adjustment(cv_value)
 
-    # 4. 行业找补（0~+0.5分）
-    industry_adj = _industry_adjustment(industry_type)
-
-    # 5. 阶段找补（0~+0.5分）
+    # 4. 阶段找补（0~+0.5分）
     stage_adj = _growth_stage_adjustment(growth_stage)
 
-    # 6. 最终分数（严格限制在 [0, 4]）
-    raw_score = base_score + stability_adj + industry_adj + stage_adj
+    # 5. 最终分数（严格限制在 [0, 4]）
+    raw_score = base_score + stability_adj + stage_adj
     final_score = max(0.0, min(4.0, raw_score))
 
     reason = (
         f"平均资本开支/净利润比率={avg_ratio:.2f}（行业类型={industry_type}），基础分={base_score}分；"
         f"资本开支波动率(CV)={cv_value:.2f}，稳定性调整={stability_adj:+.1f}分；"
-        f"行业找补={industry_adj:+.1f}分；"
         f"发展阶段={growth_stage}，阶段找补={stage_adj:+.1f}分；"
         f"最终得分={final_score:.1f}分（上限4分）"
     )
@@ -123,7 +115,6 @@ def compute_capex_score(
         "final_score": round(final_score, 1),
         "base_score": base_score,
         "stability_adjustment": stability_adj,
-        "industry_adjustment": industry_adj,
         "growth_stage_adjustment": stage_adj,
         "raw_score": round(raw_score, 1),
         "avg_capex_ratio": round(avg_ratio, 3),
@@ -167,11 +158,6 @@ def _stability_adjustment(cv: float) -> float:
         return -0.5
     else:
         return -1.0
-
-
-def _industry_adjustment(industry_type: str) -> float:
-    """行业找补（0~+0.5分）：重资产企业 capex 高是行业特性。"""
-    return 0.5 if industry_type == "heavy" else 0.0
 
 
 def _growth_stage_adjustment(growth_stage: str) -> float:
