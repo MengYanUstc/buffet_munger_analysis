@@ -58,21 +58,22 @@ class CacheManager:
         now = datetime.datetime.now().isoformat()
         records = []
         for _, row in df.iterrows():
+            # 金额字段统一转换为万元存储（roe/roic/gross_margin/net_margin/debt_ratio 为比率，不转换）
             records.append((
                 stock_code,
                 str(row.get('report_date', ''))[:10],
                 float(row['roe']) if pd.notna(row.get('roe')) else None,
                 float(row['roic']) if pd.notna(row.get('roic')) else None,
-                float(row['revenue']) if pd.notna(row.get('revenue')) else None,
-                float(row['net_profit']) if pd.notna(row.get('net_profit')) else None,
-                float(row['deduct_net_profit']) if pd.notna(row.get('deduct_net_profit')) else None,
-                float(row['parent_net_profit']) if pd.notna(row.get('parent_net_profit')) else None,
+                float(row['revenue']) / 10000.0 if pd.notna(row.get('revenue')) else None,
+                float(row['net_profit']) / 10000.0 if pd.notna(row.get('net_profit')) else None,
+                float(row['deduct_net_profit']) / 10000.0 if pd.notna(row.get('deduct_net_profit')) else None,
+                float(row['parent_net_profit']) / 10000.0 if pd.notna(row.get('parent_net_profit')) else None,
                 float(row['gross_margin']) if pd.notna(row.get('gross_margin')) else None,
                 float(row['net_margin']) if pd.notna(row.get('net_margin')) else None,
                 float(row['debt_ratio']) if pd.notna(row.get('debt_ratio')) else None,
-                float(row['operating_cash_flow']) if pd.notna(row.get('operating_cash_flow')) else None,
-                float(row['fcf']) if pd.notna(row.get('fcf')) else None,
-                float(row['capex']) if pd.notna(row.get('capex')) else None,
+                float(row['operating_cash_flow']) / 10000.0 if pd.notna(row.get('operating_cash_flow')) else None,
+                float(row['fcf']) / 10000.0 if pd.notna(row.get('fcf')) else None,
+                float(row['capex']) / 10000.0 if pd.notna(row.get('capex')) else None,
                 now
             ))
 

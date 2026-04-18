@@ -33,9 +33,9 @@ class CozeLLMClient:
         session_id: Optional[str] = None,
     ):
         self.api_token = api_token or os.getenv("COZE_API_TOKEN", "")
-        self.base_url = base_url or os.getenv("COZE_BASE_URL", "https://yktgqcwqd2.coze.site/stream_run")
-        self.project_id = project_id or os.getenv("COZE_PROJECT_ID", "7615512631918608430")
-        self.session_id = session_id or os.getenv("COZE_SESSION_ID", "hI8LM3WU4UI-nANiL15xI")
+        self.base_url = base_url or os.getenv("COZE_BASE_URL", "https://6n7dqg7m2x.coze.site/stream_run")
+        self.project_id = project_id or os.getenv("COZE_PROJECT_ID", "7630103598810136595")
+        self.session_id = session_id or os.getenv("COZE_SESSION_ID", "YqOYJpGsWVZYJTY0dN1-4")
 
     def is_configured(self) -> bool:
         return bool(self.api_token)
@@ -95,6 +95,8 @@ class CozeLLMClient:
             raise RuntimeError(f"Coze API 请求失败: HTTP {resp.status_code}, {resp.text[:500]}")
 
         # 解析 SSE 流，收集所有 answer 分片
+        # 新 Agent 事件流：message_start -> tool_request -> tool_response -> ... -> message_end
+        # 最终答案在 message_end 事件的 content.answer 中
         answer_parts = []
         for line in resp.iter_lines(decode_unicode=True):
             if not line or not line.startswith("data:"):
@@ -107,7 +109,8 @@ class CozeLLMClient:
             except json.JSONDecodeError:
                 continue
 
-            if parsed.get("type") != "answer":
+            ev_type = parsed.get("type", "")
+            if ev_type not in ("answer", "message_end"):
                 continue
 
             content = parsed.get("content", {})

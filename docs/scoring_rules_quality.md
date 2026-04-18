@@ -8,7 +8,7 @@
 | ROIC | 定量 | 6 | SQLite `financial_reports.roic` |
 | 营收增长 | 定量 | 3 | SQLite `financial_reports.revenue` |
 | 利润增长 | 定量 | 3 | SQLite `financial_reports.net_profit` |
-| ROE 稳定性 | AI_BASED | 2 | SQLite `financial_reports.roe` + LLM 微调 |
+| ROE 稳定性 | 定量 | 2 | SQLite `financial_reports.roe` |
 | 资产负债率 | AI_BASED | 2 | SQLite `financial_reports.debt_ratio` + LLM 微调 |
 
 ---
@@ -76,9 +76,7 @@
 
 ---
 
-## 5. ROE 稳定性（2 分）—— AI_BASED
-
-### 5.1 定量基础分（代码计算）
+## 5. ROE 稳定性（2 分）—— 定量
 
 基于近4年 ROE 数据的标准差 sigma 和趋势：
 
@@ -90,22 +88,21 @@
 | <= 9 | 较不稳定 | 0.5 |
 | > 9 | 很不稳定 | 0.0 |
 
-**趋势惩罚**：
-- 后2年均值 vs 前2年均值
-- 明显上升：+0.5
-- 温和上升 / 基本稳定：0
-- 温和下降：-0.5
-- 明显下降：-1.0
+**趋势惩罚**（后2年均值 vs 前2年均值）：
 
-**penalty_score** = max(0, min(2, 基础分 + 趋势惩罚))
+| 趋势差值 | 趋势方向 | 调整 |
+|----------|----------|------|
+| >= 3 | 明显上升 | +1.0 |
+| >= 1 | 温和上升 | +0.5 |
+| >= -1 | 基本稳定 | 0 |
+| >= -3 | 温和下降 | -0.5 |
+| < -3 | 明显下降 | -1.0 |
 
-### 5.2 AI 微调
+**penalty_score** = round(max(0, min(2, 基础分 + 趋势惩罚)) / 0.5) * 0.5
 
-LLM 在 `penalty_score` 基础上做 [-0.5, +0.5] 微调（步长 0.5）。
+（结果以 0.5 为步长，脚本直接输出最终分，无 AI 微调）
 
-微调依据：行业特性、周期影响、ROE 质量（是否由杠杆而非盈利驱动）等。
-
-**数据流**：`SQLite -> analyze_roe_stability() -> AiScoringEngine -> LLM 微调`
+**数据流**：`SQLite -> analyze_roe_stability() -> 纯定量计算最终分`
 
 ---
 

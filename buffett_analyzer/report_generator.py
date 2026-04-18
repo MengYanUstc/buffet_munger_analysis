@@ -156,11 +156,11 @@ class ReportGenerator:
 
     @staticmethod
     def _fmt_yi(val):
-        """将元转换为亿元，保留2位小数。"""
+        """将万元转换为亿元，保留2位小数。"""
         if val is None or (isinstance(val, float) and val != val):
             return None
         try:
-            return round(float(val) / 1e8, 2)
+            return round(float(val) / 1e4, 2)
         except (ValueError, TypeError):
             return None
 
@@ -287,7 +287,7 @@ class ReportGenerator:
         dcf = self._deep_get(ctx["reports"], ["valuation", "dimensions", "dcf_safety_margin"], {})
         market_cap = dcf.get("market_cap_approx")
         if market_cap:
-            market_cap = round(market_cap / 1e8, 2)
+            market_cap = round(market_cap / 1e4, 2)
 
         fin = ctx.get("financial", {})
         records = fin.get("records", [])
@@ -296,7 +296,7 @@ class ReportGenerator:
             "## 一、基本信息",
             "",
             f"- **分析日期**：{ctx['analysis_date']}",
-            "- **框架版本**：巴菲特芒格投资分析框架 v1.0",
+            f"- **框架版本**：巴菲特芒格投资分析框架 {self._get_framework_version()}",
         ]
         if close_price is not None:
             lines.append(f"- **最新股价**：{close_price}元（{val.get('trade_date', '今日')}）")
@@ -575,9 +575,7 @@ class ReportGenerator:
             f"- 诚信分析：{integrity.get('reason', '数据暂缺')}",
             f"- **最终得分：{integrity.get('score', 0)}/4**",
             "",
-            "### 一票否决检查",
-            "- 财务造假被立案：否",
-            "",
+
             f"**管理层总分：{mg.get('total_score', 0)}/10分**",
             "",
             f"**评级**：{mg.get('rating', '未评级')}",
@@ -646,7 +644,11 @@ class ReportGenerator:
         if ev and mc:
             ev_yi = round(ev / 1e4, 2)
             mc_yi = round(mc / 1e4, 2)
-            lines.append(f"  - FCF转化率：数据暂缺")
+            avg_conv = dcf_params.get("avg_fcf_conversion") if dcf_params else None
+            if avg_conv is not None:
+                lines.append(f"  - FCF转化率（5年平均）：{avg_conv:.2f}")
+            else:
+                lines.append(f"  - FCF转化率（5年平均）：数据暂缺")
             lines.append(f"  - DCF内在价值：{ev_yi}亿元")
             lines.append(f"  - 当前市值：{mc_yi}亿元")
             lines.append(f"  - 安全边际：{dcf.get('safety_margin', '数据暂缺')}")
@@ -727,44 +729,34 @@ class ReportGenerator:
             "",
             f"**最终评级**：{rating}",
             "",
-            "### SWOT分析",
-            "",
-            "**优势（Strengths）**：",
-            f"1. {'盈利能力稳健' if scores['quality'] >= 14 else '盈利能力有待提升'}",
-            f"2. {'护城河深厚' if scores['moat'] >= 21 else '竞争优势一般'}",
-            f"3. {'商业模式健康' if scores['business_model'] >= 14 else '商业模式有待优化'}",
-            "",
-            "**劣势（Weaknesses）**：",
-            f"1. {'增长动力不足' if scores['quality'] < 11 else '增长持续性需观察'}",
-            f"2. {'估值安全边际有限' if scores['valuation'] < 12 else '估值相对合理'}",
-            "",
-            "**机会（Opportunities）**：",
-            "1. 行业整合与集中度提升带来的份额增长机会",
-            "2. 新业务拓展与产品线延伸",
-            "",
-            "**威胁（Threats）**：",
-            "1. 宏观经济波动与行业周期风险",
-            "2. 竞争加剧与价格战风险",
-            "",
-            "### 综合投资建议",
-            "",
-            "#### 投资逻辑",
-            f"{ctx['company_name']}综合得分 {total:.1f}/100 分，评级为'{rating}'。"
-            f"{'公司具备较强的竞争优势与盈利能力，估值合理，适合长期配置。' if total >= 75 else '公司基本面尚可，但需关注护城河可持续性与增长确定性。' if total >= 50 else '公司基本面存在较多不确定性，建议回避或观望。'}",
-            "",
-            "#### 关键跟踪指标",
-            "1. ROE 与 ROIC 变化趋势：衡量盈利能力稳定性",
-            "2. 营收与利润增速：衡量成长性",
-            "3. 毛利率与行业分位：衡量竞争优势变化",
+
         ]
         return "\n".join(lines)
+
+    @staticmethod
+    def _get_framework_version() -> str:
+        """从 git tag 获取语义化版本号，无 tag 时回退到 commit hash。"""
+        import subprocess
+        try:
+            # git describe --tags --always:
+            #   - 有 tag 时: v1.0.0
+            #   - tag 后有 commit: v1.0.0-3-g98f24ae
+            #   - 无 tag 时: 98f24ae (commit hash)
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--always"],
+                capture_output=True, text=True, check=True,
+                cwd=os.path.dirname(os.path.abspath(__file__))
+            )
+            return result.stdout.strip()
+        except Exception:
+            return "dev"
 
     def _render_disclaimer(self, ctx: Dict[str, Any]) -> str:
         return (
             "## 九、免责声明\n\n"
             "本报告基于公开信息进行分析，仅供参考，不构成投资建议。投资有风险，入市需谨慎。\n\n"
             "报告中的数据和结论可能因信息更新、市场变化等因素而发生变化。投资者应独立判断，审慎决策。\n\n"
-            "分析框架：巴菲特芒格投资分析框架 v1.0"
+            f"分析框架：巴菲特芒格投资分析框架 {self._get_framework_version()}"
         )
 
     # ------------------------------------------------------------------

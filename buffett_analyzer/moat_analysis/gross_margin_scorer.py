@@ -16,13 +16,13 @@ def calculate_gross_margin_stability_score(gross_margin_std: float) -> float:
     Returns:
         毛利率稳定性建议基础分（0-4分）
     """
-    if gross_margin_std <= 1:
+    if gross_margin_std <= 1.5:
         return 4.0
-    elif gross_margin_std <= 2:
-        return 3.0
     elif gross_margin_std <= 3:
+        return 3.0
+    elif gross_margin_std <= 4.5:
         return 2.0
-    elif gross_margin_std <= 5:
+    elif gross_margin_std <= 6:
         return 1.0
     else:
         return 0.0

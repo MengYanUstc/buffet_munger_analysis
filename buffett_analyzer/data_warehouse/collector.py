@@ -313,8 +313,8 @@ class DataCollector:
             print(f"[DataCollector] 已手动更新 {stock_code} 的估值数据: {list(fields.keys())}")
 
     # ------------------------------------------------------------------
-    # 定性数据收集（拆分为独立方法，避免一次性请求过多导致超时）
-    # 策略：护城河1次 + 商业模式1次，各自独立调用，可分批次执行
+    # ------------------------------------------------------------------
+    # 定性数据收集（新 Agent：1 次调用返回 3 个模块）
     # ------------------------------------------------------------------
     def _get_coze_client(self):
         """获取 Coze LLM 客户端实例。"""
@@ -326,75 +326,89 @@ class DataCollector:
             return CozeLLMClient(api_token=token)
         return CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
 
-    def collect_moat_qualitative(self, stock_code: str) -> bool:
-        """
-        单独收集护城河定性数据（1次 Coze LLM 请求）。
-        返回是否成功。
-        """
-        if self.cache.has_fresh_qualitative(stock_code, 'moat'):
-            print(f"[DataCollector] 护城河定性缓存命中 ({stock_code})")
-            return True
-
-        client = self._get_coze_client()
-        if not client.is_configured():
-            print("[DataCollector] Coze API Token 未配置，跳过护城河定性收集")
-            return False
-
-        try:
-            from ..moat_analysis.moat_analyzer import MoatAnalyzer
-            df = self.cache.read_financial_reports(stock_code)
-            gm_values = df["gross_margin"].dropna().tail(5).tolist() if not df.empty and "gross_margin" in df.columns else []
-            gm_result = {"values": gm_values, "std": 0.0, "trend": {"trend_direction": "N/A"}} if gm_values else {}
-            prompt = MoatAnalyzer.build_qualitative_prompt(stock_code, gm_result)
-            result = client.call(prompt, timeout=120)
-            self.cache.write_qualitative_result(stock_code, 'moat', result)
-            print(f"[DataCollector] 护城河定性数据已缓存 ({stock_code})")
-            return True
-        except Exception as e:
-            print(f"[DataCollector] 护城河定性收集失败: {e}")
-            return False
-
-    def collect_business_model_qualitative(self, stock_code: str) -> bool:
-        """
-        单独收集商业模式定性数据（1次 Coze LLM 请求）。
-        包含增长确定性，供估值模块复用。
-        返回是否成功。
-        """
-        if self.cache.has_fresh_qualitative(stock_code, 'business_model'):
-            print(f"[DataCollector] 商业模式定性缓存命中 ({stock_code})")
-            return True
-
-        client = self._get_coze_client()
-        if not client.is_configured():
-            print("[DataCollector] Coze API Token 未配置，跳过商业模式定性收集")
-            return False
-
-        try:
-            from ..business_model_analysis.business_model_analyzer import BusinessModelAnalyzer
-            prompt = BusinessModelAnalyzer.build_qualitative_prompt(stock_code)
-            result = client.call(prompt, timeout=120)
-            self.cache.write_qualitative_result(stock_code, 'business_model', result)
-            print(f"[DataCollector] 商业模式定性数据已缓存 ({stock_code})")
-            return True
-        except Exception as e:
-            print(f"[DataCollector] 商业模式定性收集失败: {e}")
-            return False
+    @staticmethod
+    def _classify_module(item: Dict[str, Any]) -> Optional[str]:
+        """根据对象 key 判断属于哪个模块。"""
+        if not isinstance(item, dict):
+            return None
+        if "industry_quality" in item or "moat_type" in item:
+            return "moat"
+        if "business_model_description" in item or ("income_stability" in item and "business_model_quality" in item):
+            return "business_model"
+        if "capital_allocation" in item or "management_integrity" in item:
+            return "management"
+        return None
 
     def collect_qualitative(self, stock_code: str, types: List[str] = None):
         """
         获取定性分析数据，写入 SQLite 缓存供各模块复用。
+        新 Agent 策略：1 次 LLM 调用返回护城河 + 商业模式 + 管理层 3 个模块。
         
         Args:
             stock_code: 股票代码
-            types: 指定收集类型列表，如 ['moat'] 或 ['business_model'] 或 ['moat', 'business_model']。
-                   为 None 时收集全部。
+            types: 指定收集类型列表。为 None 时收集全部。
         """
-        targets = types or ['moat', 'business_model']
+        targets = set(types or ['moat', 'business_model', 'management'])
+        
+        # 检查缓存：如果所有请求的模块都有新鲜缓存，直接跳过
+        all_cached = True
         for t in targets:
-            if t == 'moat':
-                self.collect_moat_qualitative(stock_code)
-            elif t == 'business_model':
-                self.collect_business_model_qualitative(stock_code)
+            if not self.cache.has_fresh_qualitative(stock_code, t):
+                all_cached = False
+                break
+        if all_cached:
+            print(f"[DataCollector] 所有定性缓存命中 ({stock_code})，跳过 LLM 调用")
+            return
+
+        client = self._get_coze_client()
+        if not client.is_configured():
+            print("[DataCollector] Coze API Token 未配置，跳过定性收集")
+            return
+
+        try:
+            prompt = f"{stock_code}分析"
+            print(f"[DataCollector] 统一调用 Coze Agent: {stock_code}")
+            result = client.call(prompt, timeout=180)
+            
+            # 解析返回结果：可能是 JSON 数组或单对象
+            modules_data = self._parse_qualitative_response(result)
+            
+            # 写入缓存
+            for module_key, module_data in modules_data.items():
+                if module_key in targets and module_data:
+                    self.cache.write_qualitative_result(stock_code, module_key, module_data)
+                    print(f"[DataCollector] {module_key} 定性数据已缓存 ({stock_code})")
+            
+            # 对未返回的模块写入空结果（避免重复调用）
+            for t in targets:
+                if t not in modules_data or not modules_data.get(t):
+                    print(f"[DataCollector] 警告: {t} 数据未在返回中找到")
+                    
+        except Exception as e:
+            print(f"[DataCollector] 统一定性收集失败: {e}")
+
+    def _parse_qualitative_response(self, result: Any) -> Dict[str, Dict[str, Any]]:
+        """解析 Coze Agent 返回的统一结果，按模块分类。"""
+        modules = {"moat": {}, "business_model": {}, "management": {}}
+        
+        if isinstance(result, list):
+            # JSON 数组：遍历每个对象，按 key 分类
+            for item in result:
+                module_key = self._classify_module(item)
+                if module_key:
+                    modules[module_key] = item
+        elif isinstance(result, dict):
+            # 单对象：尝试判断属于哪个模块
+            module_key = self._classify_module(result)
+            if module_key:
+                modules[module_key] = result
+            else:
+                # 可能是嵌套结构，尝试提取子对象
+                for key in ["moat", "business_model", "management"]:
+                    if key in result:
+                        modules[key] = result[key]
+        
+        return modules
 
     def get_qualitative_result(self, stock_code: str, analysis_type: str) -> Optional[Dict[str, Any]]:
         """从缓存读取定性分析结果。"""

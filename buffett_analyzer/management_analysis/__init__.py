@@ -3,10 +3,7 @@
 """
 
 from .management_analyzer import ManagementAnalyzer
-from .plugins import CapitalAllocationPlugin, IntegrityPlugin
 
 __all__ = [
     "ManagementAnalyzer",
-    "CapitalAllocationPlugin",
-    "IntegrityPlugin",
 ]

@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-自动提交脚本
-检测 git diff 修改行数，若大于 100 行则自动提交并推送。
-支持自定义 commit message：python auto_commit.py "你的提交信息"
+自动提交 + 语义化版本管理脚本
+
+规则：
+- 检测工作区变更，自动 commit（保持原有提交信息生成逻辑）
+- 累计变更行数（自上次 tag 以来已 commit + 当前工作区）>= 500 → 自动打 minor tag（v1.1.0）
+- 累计变更行数 >= 200 → 自动打 patch tag（v1.0.1）
+- 大版本 tag（major bump）由用户手动打
+
+用法：
+    python auto_commit.py              # 自动检测、提交、打 tag
+    python auto_commit.py "提交说明"    # 使用自定义 commit message
 """
 
 import subprocess
@@ -15,20 +23,43 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # 便携版 Git 路径（如已加入系统 PATH，可改为 "git"）
 GIT_BIN = str(PROJECT_ROOT / "tools" / "git" / "cmd" / "git.exe")
 
-THRESHOLD = 100
+PATCH_THRESHOLD = 200
+MINOR_THRESHOLD = 500
 
 
 def run_git(args):
     return subprocess.run([GIT_BIN] + args, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
 
 
-def get_diff_stats():
-    result = run_git(["diff", "--stat", "HEAD"])
-    return result.stdout
+def get_latest_tag():
+    """获取最近的 tag，如果没有返回 None。"""
+    result = run_git(["describe", "--tags", "--abbrev=0"])
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def parse_version(tag):
+    """解析语义化版本号 v1.0.0 -> (1, 0, 0)。"""
+    if not tag:
+        return (0, 0, 0)
+    m = re.match(r'v?(\d+)\.(\d+)\.(\d+)', tag)
+    if m:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return (0, 0, 0)
+
+
+def bump_version(major, minor, patch, bump_type):
+    """根据 bump 类型计算新版本号。"""
+    if bump_type == "minor":
+        return (major, minor + 1, 0)
+    elif bump_type == "patch":
+        return (major, minor, patch + 1)
+    return (major, minor, patch)
 
 
 def parse_total_lines(stat_text):
-    """从 git diff --stat 最后一行提取总修改行数。"""
+    """从 git diff --stat 最后一行提取总修改行数（insertions + deletions）。"""
     lines = stat_text.strip().splitlines()
     if not lines:
         return 0
@@ -43,6 +74,20 @@ def parse_total_lines(stat_text):
     return total
 
 
+def get_lines_since_tag(tag):
+    """计算从 tag 到 HEAD 的累计变更行数。如果没有 tag，返回 0。"""
+    if tag is None:
+        return 0
+    result = run_git(["diff", "--stat", tag, "HEAD"])
+    return parse_total_lines(result.stdout)
+
+
+def get_uncommitted_lines():
+    """计算工作区未提交的变更行数。"""
+    result = run_git(["diff", "--stat", "HEAD"])
+    return parse_total_lines(result.stdout)
+
+
 def get_changed_files():
     result = run_git(["diff", "--name-only", "HEAD"])
     return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
@@ -52,7 +97,6 @@ def generate_commit_message(files, total_lines, custom_msg=None):
     if custom_msg:
         return custom_msg
 
-    # 推断修改类型
     has_py = any(f.endswith('.py') for f in files)
     has_req = any('requirements' in f for f in files)
     has_md = any(f.endswith('.md') for f in files)
@@ -72,7 +116,6 @@ def generate_commit_message(files, total_lines, custom_msg=None):
 
     module_str = '/'.join(sorted(modules)) if modules else 'project'
 
-    # 选择标签
     if has_req:
         tag = "deps"
     elif has_md and not has_py:
@@ -88,43 +131,64 @@ def generate_commit_message(files, total_lines, custom_msg=None):
 
 
 def main():
-    stats = get_diff_stats()
-    if not stats.strip():
-        print("[auto_commit] 未检测到代码变更，跳过提交。")
+    latest_tag = get_latest_tag()
+    print(f"[auto_version] 最近 tag: {latest_tag or '无'}")
+
+    major, minor, patch = parse_version(latest_tag)
+
+    committed_lines = get_lines_since_tag(latest_tag)
+    uncommitted_lines = get_uncommitted_lines()
+    total_lines = committed_lines + uncommitted_lines
+
+    print(f"[auto_version] 自上次 tag 已 commit: {committed_lines} 行")
+    print(f"[auto_version] 当前工作区未提交: {uncommitted_lines} 行")
+    print(f"[auto_version] 累计: {total_lines} 行")
+
+    # 判断是否需要打 tag
+    bump_type = None
+    if total_lines >= MINOR_THRESHOLD:
+        bump_type = "minor"
+    elif total_lines >= PATCH_THRESHOLD:
+        bump_type = "patch"
+
+    # 如果有未提交的变更，先 commit
+    if uncommitted_lines > 0:
+        files = get_changed_files()
+        custom_msg = sys.argv[1] if len(sys.argv) > 1 else None
+        msg = generate_commit_message(files, uncommitted_lines, custom_msg)
+
+        print(f"[auto_version] 自动 commit: {msg}")
+
+        r1 = run_git(["add", "."])
+        if r1.returncode != 0:
+            print(f"[auto_version] git add 失败: {r1.stderr}")
+            sys.exit(1)
+
+        r2 = run_git(["commit", "-m", msg])
+        if r2.returncode != 0:
+            print(f"[auto_version] git commit 失败: {r2.stderr}")
+            sys.exit(1)
+
+        print("[auto_version] commit 成功")
+    else:
+        print("[auto_version] 工作区无未提交变更")
+
+    if bump_type is None:
+        print(f"[auto_version] 累计 {total_lines} 行，未达到 tag 阈值（{PATCH_THRESHOLD}/{MINOR_THRESHOLD}），跳过打 tag。")
         sys.exit(0)
 
-    total_lines = parse_total_lines(stats)
-    print(f"[auto_commit] 检测到 {total_lines} 行代码变更。")
+    # 计算新版本号并打 tag
+    new_major, new_minor, new_patch = bump_version(major, minor, patch, bump_type)
+    new_tag = f"v{new_major}.{new_minor}.{new_patch}"
 
-    if total_lines <= THRESHOLD:
-        print(f"[auto_commit] 变更行数（{total_lines}）<= {THRESHOLD}，未达到自动提交阈值。")
-        sys.exit(0)
+    print(f"[auto_version] 累计 {total_lines} 行 >= {MINOR_THRESHOLD if bump_type == 'minor' else PATCH_THRESHOLD}，自动打 {bump_type} tag: {new_tag}")
 
-    files = get_changed_files()
-    custom_msg = sys.argv[1] if len(sys.argv) > 1 else None
-    msg = generate_commit_message(files, total_lines, custom_msg)
-
-    print(f"[auto_commit] 自动生成的 commit message: {msg}")
-
-    # git add
-    r1 = run_git(["add", "."])
-    if r1.returncode != 0:
-        print(f"[auto_commit] git add 失败: {r1.stderr}")
-        sys.exit(1)
-
-    # git commit
-    r2 = run_git(["commit", "-m", msg])
-    if r2.returncode != 0:
-        print(f"[auto_commit] git commit 失败: {r2.stderr}")
-        sys.exit(1)
-
-    # git push
-    r3 = run_git(["push"])
+    r3 = run_git(["tag", new_tag])
     if r3.returncode != 0:
-        print(f"[auto_commit] git push 失败: {r3.stderr}")
+        print(f"[auto_version] git tag 失败: {r3.stderr}")
         sys.exit(1)
 
-    print(f"[auto_commit] 已成功提交并推送: {msg}")
+    print(f"[auto_version] 已成功打 tag: {new_tag}")
 
 
 if __name__ == "__main__":

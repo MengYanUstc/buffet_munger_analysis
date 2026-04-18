@@ -106,10 +106,10 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     elif trend_diff >= -3:    trend = "温和下降"
     else:                     trend = "明显下降"
 
-    # 趋势强制惩罚规则
+    # 趋势对称调整规则
     trend_penalties = {
-        "明显上升": 0.5,
-        "温和上升": 0.0,
+        "明显上升": 1.0,
+        "温和上升": 0.5,
         "基本稳定": 0.0,
         "温和下降": -0.5,
         "明显下降": -1.0,
