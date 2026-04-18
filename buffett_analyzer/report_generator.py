@@ -5,7 +5,7 @@
 
 import os
 import re
-import uuid
+
 import datetime
 from typing import Dict, Any, Optional, List
 
@@ -772,15 +772,28 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _save_report(self, markdown: str, company_name: str) -> str:
-        """保存报告到 reports/ 目录，返回文件路径。"""
+        """保存报告到 reports/ 目录，返回文件路径。
+        ID 为自增5位数字（00001, 00002...），持久化存储在 reports/.counter 中。
+        """
         reports_dir = os.path.join(os.getcwd(), "reports")
         os.makedirs(reports_dir, exist_ok=True)
 
         today = datetime.date.today().strftime("%Y%m%d")
-        uid = uuid.uuid4().hex[:8]
+        # 自增ID
+        counter_path = os.path.join(reports_dir, ".counter")
+        current_id = 1
+        if os.path.exists(counter_path):
+            try:
+                with open(counter_path, "r", encoding="utf-8") as f:
+                    current_id = int(f.read().strip()) + 1
+            except (ValueError, IOError):
+                current_id = 1
+        with open(counter_path, "w", encoding="utf-8") as f:
+            f.write(str(current_id))
+
         # 清理公司简称中的特殊字符
         safe_name = re.sub(r'[\\/:*?"<>|]', '', company_name)
-        filename = f"{self.stock_code}_{safe_name}_{today}_{uid}.md"
+        filename = f"{self.stock_code}_{safe_name}_{today}_{current_id:05d}.md"
         filepath = os.path.join(reports_dir, filename)
 
         with open(filepath, "w", encoding="utf-8") as f:
