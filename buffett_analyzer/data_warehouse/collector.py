@@ -368,7 +368,7 @@ class DataCollector:
         try:
             prompt = f"{stock_code}分析"
             print(f"[DataCollector] 统一调用 Coze Agent: {stock_code}")
-            result = client.call(prompt, timeout=180)
+            result = client.call(prompt, timeout=600)
             
             # 解析返回结果：可能是 JSON 数组或单对象
             modules_data = self._parse_qualitative_response(result)

@@ -91,7 +91,9 @@ class ReportGenerator:
                 name_col = 'name' if 'name' in df.columns else '名称'
                 matched = df[df[code_col] == self.stock_code]
                 if not matched.empty:
-                    return str(matched.iloc[0][name_col])
+                    name = str(matched.iloc[0][name_col])
+                    # 去掉名称中的空格（如"五 粮 液"→"五粮液"）
+                    return name.replace(' ', '')
         except Exception:
             pass
         return self.stock_code
@@ -465,6 +467,25 @@ class ReportGenerator:
             f"## 四、护城河分析（{moat.get('total_score', 0)}/30分）",
             "",
             f"**护城河评级**：{moat.get('rating', '未评级')}",
+        ]
+
+        # 关键事实
+        key_facts = moat.get("key_facts", [])
+        if key_facts:
+            lines.append("")
+            lines.append("### 关键事实")
+            for fact in key_facts:
+                lines.append(f"- {fact}")
+
+        # 风险提示
+        risks = moat.get("risk_warnings", [])
+        if risks:
+            lines.append("")
+            lines.append("### 风险提示")
+            for r in risks:
+                lines.append(f"- ⚠️ {r}")
+
+        lines += [
             "",
             "### 护城河类型识别（⚠️ 定性判断）",
             f"- 护城河强度综合判断：{'强' if mt.get('score', 0) >= 5 else '中' if mt.get('score', 0) >= 3.5 else '弱'}",
@@ -520,6 +541,25 @@ class ReportGenerator:
 
         lines = [
             f"## 五、商业模式分析（{bm.get('total_score', 0)}/20分）",
+        ]
+
+        # 关键事实
+        key_facts = bm.get("key_facts", [])
+        if key_facts:
+            lines.append("")
+            lines.append("### 关键事实")
+            for fact in key_facts:
+                lines.append(f"- {fact}")
+
+        # 风险提示
+        risks = bm.get("risk_warnings", [])
+        if risks:
+            lines.append("")
+            lines.append("### 风险提示")
+            for r in risks:
+                lines.append(f"- ⚠️ {r}")
+
+        lines += [
             "",
             "### 自由现金流质量（✅ 完全定量）",
             f"- 行业类型：{capex.get('industry_type', 'medium')}",
@@ -566,6 +606,24 @@ class ReportGenerator:
 
         lines = [
             f"## 六、管理层分析（{mg.get('total_score', 0)}/10分）",
+        ]
+
+        # 关键事实
+        key_facts = mg.get("key_facts", [])
+        if key_facts:
+            lines.append("")
+            lines.append("### 关键事实")
+            for fact in key_facts:
+                lines.append(f"- {fact}")
+
+        # 风险提示
+        if risks:
+            lines.append("")
+            lines.append("### 风险提示")
+            for r in risks:
+                lines.append(f"- ⚠️ {r}")
+
+        lines += [
             "",
             "### 资本配置能力评分（⚠️ 定性判断）",
             f"- 资本配置分析：{ca.get('reason', '数据暂缺')}",
@@ -581,15 +639,9 @@ class ReportGenerator:
             f"**评级**：{mg.get('rating', '未评级')}",
             "",
             "**评级标准**：9-10分卓越 | 7.5-8.5分优秀 | 6-7分良好 | 5-5.5分中等 | 4-4.5分较差 | <4分差",
+            "",
+            "**管理层评语**：",
         ]
-        if risks:
-            lines.append("")
-            lines.append("### 风险提示（如有）")
-            for r in risks:
-                lines.append(f"⚠️ {r}")
-
-        lines.append("")
-        lines.append("**管理层评语**：")
         lines.append(
             f"{ctx['company_name']}管理层得分 {mg.get('total_score', 0)}/10 分。"
             f"{'资本配置能力优秀' if ca.get('score', 0) >= 5 else '资本配置能力一般'}，"
@@ -785,7 +837,7 @@ class ReportGenerator:
 
         # 清理公司简称中的特殊字符
         safe_name = re.sub(r'[\\/:*?"<>|]', '', company_name)
-        filename = f"{self.stock_code}_{safe_name}_{today}_{current_id:05d}.md"
+        filename = f"{current_id:05d}_{self.stock_code}_{safe_name}_{today}.md"
         filepath = os.path.join(reports_dir, filename)
 
         with open(filepath, "w", encoding="utf-8") as f:

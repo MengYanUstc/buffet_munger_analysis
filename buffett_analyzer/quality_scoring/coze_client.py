@@ -46,7 +46,7 @@ class CozeLLMClient:
         temperature: float = 0.1,
         max_tokens: int = 4096,
         enable_web_search: bool = False,
-        timeout: int = 120,
+        timeout: int = 600,
     ) -> Dict[str, Any]:
         """
         调用 Coze LLM，返回解析后的 JSON dict。

@@ -57,7 +57,7 @@ def calculate_pe_base_score(pe: Optional[float]) -> float:
 
 def calculate_pb_bonus(pb: Optional[float]) -> float:
     """
-    PB加分项（-0.5到+1分）。
+    PB加分项（0到+1分），不扣分。
     """
     if pb is None:
         return 0.0
@@ -65,15 +65,13 @@ def calculate_pb_bonus(pb: Optional[float]) -> float:
         return 1.0
     elif pb < 3.0:
         return 0.5
-    elif pb < 4.0:
-        return 0.0
     else:
-        return -0.5
+        return 0.0
 
 
 def calculate_ps_bonus(ps: Optional[float]) -> float:
     """
-    PS加分项（-0.5到+1分）。
+    PS加分项（0到+1分），不扣分。
     """
     if ps is None:
         return 0.0
@@ -81,10 +79,8 @@ def calculate_ps_bonus(ps: Optional[float]) -> float:
         return 1.0
     elif ps < 3.0:
         return 0.5
-    elif ps < 4.0:
-        return 0.0
     else:
-        return -0.5
+        return 0.0
 
 
 def calculate_absolute_valuation_score(

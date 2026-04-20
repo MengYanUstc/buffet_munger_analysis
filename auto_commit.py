@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 GIT_BIN = str(PROJECT_ROOT / "tools" / "git" / "cmd" / "git.exe")
 
 PATCH_THRESHOLD = 200
-MINOR_THRESHOLD = 500
+MINOR_THRESHOLD = 1000
 
 
 def run_git(args):

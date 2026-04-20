@@ -143,6 +143,8 @@ class BusinessModelAnalyzer(AnalyzerBase):
             rating=rating,
             dimensions=dimensions,
             summary=summary,
+            risk_warnings=llm_result.get("risk_warnings", []),
+            key_facts=llm_result.get("key_facts", []),
             raw_data=raw_data,
         )
 
@@ -165,7 +167,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
         prompt = self.build_qualitative_prompt(self.stock_code)
         try:
-            result = client.call(prompt, timeout=120)
+            result = client.call(prompt, timeout=600)
             return result
         except Exception as e:
             print(f"[BusinessModelAnalyzer] Coze LLM 调用失败: {e}")

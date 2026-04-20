@@ -23,6 +23,7 @@ class AnalysisReport:
         dimensions: Dict[str, Any] = None,
         summary: Dict[str, Any] = None,
         risk_warnings: list = None,
+        key_facts: list = None,
         raw_data: Dict[str, Any] = None,
     ):
         self.module_id = module_id
@@ -35,6 +36,7 @@ class AnalysisReport:
         self.dimensions = dimensions or {}
         self.summary = summary or {}
         self.risk_warnings = risk_warnings or []
+        self.key_facts = key_facts or []
         self.raw_data = raw_data or {}
 
     def to_dict(self) -> Dict[str, Any]:
@@ -49,6 +51,7 @@ class AnalysisReport:
             "dimensions": self.dimensions,
             "summary": self.summary,
             "risk_warnings": self.risk_warnings,
+            "key_facts": self.key_facts,
             "raw_data": self.raw_data,
         }
 

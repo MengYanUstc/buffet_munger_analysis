@@ -40,12 +40,12 @@ class ManagementAnalyzer(AnalyzerBase):
         total_score = round(cap_score + int_score, 2)
         rating = self._rating(total_score)
 
-        # 4. 风险提示
-        risks = []
+        # 4. 风险提示（合并 LLM 返回和代码生成）
+        risks = llm_result.get("risk_warnings", [])
         if int_score <= 1.0:
-            risks.append("⚠️ 管理层诚信评分极低，存在重大治理或违规风险")
+            risks.append("管理层诚信评分极低，存在重大治理或违规风险")
         if cap_score <= 2.0:
-            risks.append("⚠️ 资本配置能力评分极低，可能存在资本浪费或并购失败")
+            risks.append("资本配置能力评分极低，可能存在资本浪费或并购失败")
 
         dimensions = {
             "capital_allocation": {
@@ -83,6 +83,7 @@ class ManagementAnalyzer(AnalyzerBase):
             dimensions=dimensions,
             summary=summary,
             risk_warnings=risks,
+            key_facts=llm_result.get("key_facts", []),
             raw_data=raw_data,
         )
 
@@ -107,7 +108,7 @@ class ManagementAnalyzer(AnalyzerBase):
 
         prompt = self.build_qualitative_prompt(self.stock_code)
         try:
-            result = client.call(prompt, timeout=120)
+            result = client.call(prompt, timeout=600)
             result["_raw_text"] = ""
             return result
         except Exception as e:

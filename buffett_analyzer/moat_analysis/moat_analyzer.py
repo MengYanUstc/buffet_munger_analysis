@@ -111,6 +111,8 @@ class MoatAnalyzer(AnalyzerBase):
             rating=rating,
             dimensions=dimensions,
             summary=summary,
+            risk_warnings=llm_result.get("risk_warnings", []),
+            key_facts=llm_result.get("key_facts", []),
             raw_data=raw_data,
         )
 
@@ -146,7 +148,7 @@ class MoatAnalyzer(AnalyzerBase):
 
         prompt = self.build_qualitative_prompt(self.stock_code, gm_result)
         try:
-            result = client.call(prompt, timeout=120)
+            result = client.call(prompt, timeout=600)
             result["_raw_text"] = ""
             return result
         except Exception as e:
