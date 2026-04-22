@@ -73,6 +73,44 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stock_daily_prices (
+                    stock_code TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    amplitude REAL,
+                    change_pct REAL,
+                    turnover REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (stock_code, trade_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stock_weekly_prices (
+                    stock_code TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    amplitude REAL,
+                    change_pct REAL,
+                    turnover REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (stock_code, trade_date)
+                )
+                """
+            )
             conn.commit()
         self._migrate()
 

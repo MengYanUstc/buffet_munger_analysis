@@ -226,3 +226,65 @@ class CacheManager:
             """,
             (stock_code, analysis_type, json.dumps(result, ensure_ascii=False), now)
         )
+
+    # ------------------------------------------------------------------
+    # 股价数据缓存
+    # ------------------------------------------------------------------
+    def has_price_data(self, stock_code: str, table: str, min_records: int = 1) -> bool:
+        """检查是否已有指定数量的股价数据。
+        table: 'stock_daily_prices' 或 'stock_weekly_prices'
+        """
+        row = self.db.fetchone(
+            f"SELECT COUNT(*) as cnt FROM {table} WHERE stock_code=?",
+            (stock_code,)
+        )
+        return row is not None and row["cnt"] >= min_records
+
+    def read_prices(self, stock_code: str, table: str) -> pd.DataFrame:
+        """读取股价数据。"""
+        rows = self.db.fetchall(
+            f"""
+            SELECT stock_code, trade_date, open, high, low, close,
+                   volume, amount, amplitude, change_pct, turnover
+            FROM {table}
+            WHERE stock_code=?
+            ORDER BY trade_date
+            """,
+            (stock_code,)
+        )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows])
+
+    def write_prices(self, stock_code: str, table: str, df: pd.DataFrame):
+        """批量写入股价数据。"""
+        if df.empty:
+            return
+        now = datetime.datetime.now().isoformat()
+        records = []
+        for _, row in df.iterrows():
+            records.append((
+                stock_code,
+                str(row.get("trade_date", ""))[:10],
+                float(row["open"]) if pd.notna(row.get("open")) else None,
+                float(row["high"]) if pd.notna(row.get("high")) else None,
+                float(row["low"]) if pd.notna(row.get("low")) else None,
+                float(row["close"]) if pd.notna(row.get("close")) else None,
+                float(row["volume"]) if pd.notna(row.get("volume")) else None,
+                float(row["amount"]) if pd.notna(row.get("amount")) else None,
+                float(row["amplitude"]) if pd.notna(row.get("amplitude")) else None,
+                float(row["change_pct"]) if pd.notna(row.get("change_pct")) else None,
+                float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
+                now,
+            ))
+
+        self.db.execute(
+            f"""
+            INSERT OR REPLACE INTO {table}
+            (stock_code, trade_date, open, high, low, close,
+             volume, amount, amplitude, change_pct, turnover, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            many=True,
+            parameters=records,
+        )

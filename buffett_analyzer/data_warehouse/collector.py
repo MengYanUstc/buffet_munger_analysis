@@ -14,6 +14,7 @@ from .fetchers.akshare_fetcher import AkShareFetcher
 from .fetchers.baostock_fetcher import BaoStockFetcher
 from .fetchers.industry_fetcher import IndustryFetcher
 from .fetchers.web_search_fetcher import WebSearchFetcher
+from .fetchers.price_fetcher import PriceFetcher
 from ..utils import is_hk_stock
 
 
@@ -25,6 +26,7 @@ class DataCollector:
         self.bs_fetcher = BaoStockFetcher()
         self.industry_fetcher = IndustryFetcher()
         self.web_search_fetcher = WebSearchFetcher()
+        self.price_fetcher = PriceFetcher()
 
     def _get_stock_name(self, stock_code: str) -> str:
         """尝试获取股票简称，用于搜索关键词。"""
@@ -139,31 +141,70 @@ class DataCollector:
     # ------------------------------------------------------------------
     # 增强收集：包含行业估值 enrich 和联网搜索补缺
     # ------------------------------------------------------------------
+    def collect_prices(self, stock_code: str) -> Dict[str, Any]:
+        """拉取并缓存近1年日K和近5年周K，返回股价数据摘要。"""
+        result = {"daily": None, "weekly": None, "sources": {}}
+
+        # 日K：近1年
+        if self.cache.has_price_data(stock_code, "stock_daily_prices", min_records=200):
+            result["daily"] = self.cache.read_prices(stock_code, "stock_daily_prices")
+            result["sources"]["daily"] = "cache"
+        else:
+            df_daily = self.price_fetcher.fetch_daily(stock_code, years=1)
+            if not df_daily.empty:
+                self.cache.write_prices(stock_code, "stock_daily_prices", df_daily)
+                self.cache.update_meta(stock_code, "stock_daily_prices", len(df_daily))
+                result["daily"] = df_daily
+                result["sources"]["daily"] = "akshare"
+            else:
+                result["sources"]["daily"] = "failed"
+
+        # 周K：近5年
+        if self.cache.has_price_data(stock_code, "stock_weekly_prices", min_records=200):
+            result["weekly"] = self.cache.read_prices(stock_code, "stock_weekly_prices")
+            result["sources"]["weekly"] = "cache"
+        else:
+            df_weekly = self.price_fetcher.fetch_weekly(stock_code, years=5)
+            if not df_weekly.empty:
+                self.cache.write_prices(stock_code, "stock_weekly_prices", df_weekly)
+                self.cache.update_meta(stock_code, "stock_weekly_prices", len(df_weekly))
+                result["weekly"] = df_weekly
+                result["sources"]["weekly"] = "akshare"
+            else:
+                result["sources"]["weekly"] = "failed"
+
+        return result
+
     def collect_enhanced(self, stock_code: str) -> Dict[str, Any]:
         """
         1) 执行基础 collect
-        2) enrich 行业估值
-        3) 检测缺失字段（港股历史分位）
-        4) 联网搜索补缺
-        5) 返回完整数据
+        2) 拉取股价数据（日K/周K）
+        3) enrich 行业估值
+        4) 检测缺失字段（港股历史分位）
+        5) 联网搜索补缺
+        6) 返回完整数据
         """
         # 1. 基础收集
         result = self.collect(stock_code)
 
-        # 2. 行业估值 enrich（无论估值是否来自缓存，都重新 enrich）
+        # 2. 股价数据
+        price_result = self.collect_prices(stock_code)
+        result["prices"] = price_result
+
+        # 3. 行业估值 enrich（无论估值是否来自缓存，都重新 enrich）
         industry_data = self.industry_fetcher.fetch(stock_code)
         self._merge_industry_to_db(stock_code, industry_data)
 
-        # 3. 检测缺失字段
+        # 4. 检测缺失字段
         missing = self._detect_missing(stock_code)
 
-        # 4. 联网搜索补缺
+        # 5. 联网搜索补缺
         if missing:
             stock_name = self._get_stock_name(stock_code)
             web_data = self.web_search_fetcher.fill_missing(stock_code, stock_name, missing)
             self._write_enrichment_to_db(stock_code, web_data)
 
-        # 5. 重新读取完整估值
+        # 6. 重新读取完整估值
         full_val = self.cache.read_valuation(stock_code)
         if full_val:
             result["valuation"] = full_val

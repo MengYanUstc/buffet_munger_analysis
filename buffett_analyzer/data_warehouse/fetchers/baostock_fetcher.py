@@ -1,6 +1,6 @@
 """
 BaoStock 数据获取封装
-获取近7年日K线数据（含PE、PB、PS），并计算最新值的历史分位。
+获取近5年日K线数据（含PE、PB、PS），并计算最新值的历史分位。
 """
 
 import datetime
@@ -39,7 +39,7 @@ class BaoStockFetcher:
 
     def fetch_valuation(self, stock_code: str) -> Dict[str, Any]:
         """
-        获取指定股票近7年估值数据，返回：
+        获取指定股票近5年估值数据，返回：
         {
             "valuation_df": pd.DataFrame,  # 原始日K数据
             "latest": {
@@ -57,7 +57,7 @@ class BaoStockFetcher:
         self._ensure_login()
         code = self._to_baostock_code(stock_code)
         end_date = datetime.date.today().strftime('%Y-%m-%d')
-        start_date = (datetime.date.today() - datetime.timedelta(days=7*365+30)).strftime('%Y-%m-%d')
+        start_date = (datetime.date.today() - datetime.timedelta(days=5*365+30)).strftime('%Y-%m-%d')
 
         fields = "date,code,close,peTTM,pbMRQ,psTTM"
         rs = bs.query_history_k_data_plus(
@@ -88,7 +88,12 @@ class BaoStockFetcher:
         df = df.replace('', np.nan)
         df = df.dropna(subset=['date'])
 
-        # 计算分位数
+        # 提取每月末一个采样点（5年≈60个点），避免日线数据过度稀释
+        df['date'] = pd.to_datetime(df['date'])
+        df['year_month'] = df['date'].dt.to_period('M')
+        monthly_df = df.groupby('year_month').tail(1).reset_index(drop=True)
+
+        # 计算分位数（基于月末采样点）
         def _percentile(series: pd.Series, current_val: float) -> Optional[float]:
             clean = series.dropna()
             clean = clean[clean > 0]
@@ -103,16 +108,16 @@ class BaoStockFetcher:
         ps_val = latest_row.get('psTTM')
 
         result = {
-            "valuation_df": df,
+            "valuation_df": monthly_df,
             "latest": {
                 "trade_date": str(latest_row.get('date', '')),
                 "close_price": float(latest_row.get('close')) if pd.notna(latest_row.get('close')) else None,
                 "pe_ttm": float(pe_val) if pd.notna(pe_val) else None,
                 "pb": float(pb_val) if pd.notna(pb_val) else None,
                 "ps_ttm": float(ps_val) if pd.notna(ps_val) else None,
-                "pe_percentile_5y": _percentile(df['peTTM'], pe_val),
-                "pb_percentile_5y": _percentile(df['pbMRQ'], pb_val),
-                "ps_percentile_5y": _percentile(df['psTTM'], ps_val),
+                "pe_percentile_5y": _percentile(monthly_df['peTTM'], pe_val),
+                "pb_percentile_5y": _percentile(monthly_df['pbMRQ'], pb_val),
+                "ps_percentile_5y": _percentile(monthly_df['psTTM'], ps_val),
             }
         }
         return result
