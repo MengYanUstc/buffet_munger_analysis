@@ -87,6 +87,9 @@ class Database:
                     amplitude REAL,
                     change_pct REAL,
                     turnover REAL,
+                    pe_ttm REAL,
+                    pb REAL,
+                    ps_ttm REAL,
                     updated_at TEXT,
                     PRIMARY KEY (stock_code, trade_date)
                 )
@@ -108,6 +111,78 @@ class Database:
                     turnover REAL,
                     updated_at TEXT,
                     PRIMARY KEY (stock_code, trade_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stock_monthly_prices (
+                    stock_code TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (stock_code, trade_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS financial_reports_quarterly (
+                    stock_code TEXT NOT NULL,
+                    report_date TEXT NOT NULL,
+                    roe REAL,
+                    roic REAL,
+                    revenue REAL,
+                    net_profit REAL,
+                    deduct_net_profit REAL,
+                    parent_net_profit REAL,
+                    gross_margin REAL,
+                    net_margin REAL,
+                    debt_ratio REAL,
+                    operating_cash_flow REAL,
+                    fcf REAL,
+                    capex REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (stock_code, report_date)
+                )
+                """
+            )
+            # 指数日K（量化交易专用，与报告流程独立）
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS index_daily_prices (
+                    index_code TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (index_code, trade_date)
+                )
+                """
+            )
+            # 指数周K（量化交易专用，与报告流程独立）
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS index_weekly_prices (
+                    index_code TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    open REAL,
+                    high REAL,
+                    low REAL,
+                    close REAL,
+                    volume REAL,
+                    amount REAL,
+                    updated_at TEXT,
+                    PRIMARY KEY (index_code, trade_date)
                 )
                 """
             )
@@ -192,6 +267,13 @@ class Database:
                 """
             )
             conn.commit()
+
+            # 兼容旧表：为 stock_daily_prices 增加 pe_ttm, pb, ps_ttm 列
+            dp_cols = [r[1] for r in conn.execute("PRAGMA table_info(stock_daily_prices)")]
+            for col_name, col_type in [("pe_ttm", "REAL"), ("pb", "REAL"), ("ps_ttm", "REAL")]:
+                if col_name not in dp_cols:
+                    conn.execute(f"ALTER TABLE stock_daily_prices ADD COLUMN {col_name} {col_type}")
+                    conn.commit()
 
             # 兼容旧表：为 ai_qualitative_scores 增加 details_json 列
             aq_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_qualitative_scores)")]

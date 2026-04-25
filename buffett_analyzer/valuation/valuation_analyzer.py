@@ -33,7 +33,11 @@ from .valuation_scorer import (
     calculate_long_term_peg_score,
     calculate_dcf_valuation_total,
     calculate_dcf_safety_margin_score,
-    get_valuation_level,
+    calculate_pe_base_score,
+    calculate_pb_bonus,
+    calculate_ps_bonus,
+    calculate_historical_percentile_score,
+    calculate_pb_ps_percentile_bonus,
 )
 
 
@@ -62,7 +66,7 @@ class ValuationAnalyzer(AnalyzerBase):
         ps = val_data.get("ps_ttm")
         pe_percentile = val_data.get("pe_percentile_5y")
         pb_percentile = val_data.get("pb_percentile_5y")
-        pe_vs_industry = val_data.get("pe_vs_industry")
+        ps_percentile = val_data.get("ps_percentile_5y")
         close_price = val_data.get("close_price")
 
         # 盈利 CAGR（用于 PEG 和 DCF 增长率序列）
@@ -83,25 +87,26 @@ class ValuationAnalyzer(AnalyzerBase):
             "pe": pe,
             "pb": pb,
             "ps": ps,
-            "pe_base_score": self._pe_base_score(pe),
-            "pb_bonus": self._pb_bonus(pb),
-            "ps_bonus": self._ps_bonus(ps),
+            "pe_base_score": calculate_pe_base_score(pe),
+            "pb_bonus": calculate_pb_bonus(pb),
+            "ps_bonus": calculate_ps_bonus(ps),
             "score": abs_score,
             "max_score": 6.0,
             "reason": self._abs_reason(pe, pb, ps, abs_score),
         }
 
         # 4.2 相对估值（4分）
-        rel_score = calculate_relative_valuation_score(pe_percentile, pe_vs_industry)
+        rel_score = calculate_relative_valuation_score(pe_percentile, pb_percentile, ps_percentile)
         rel_detail = {
             "pe_percentile_5y": pe_percentile,
             "pb_percentile_5y": pb_percentile,
-            "pe_vs_industry": pe_vs_industry,
-            "historical_percentile_score": self._hist_score(pe_percentile),
-            "relative_industry_score": self._ind_score(pe_vs_industry),
+            "ps_percentile_5y": ps_percentile,
+            "pe_historical_score": calculate_historical_percentile_score(pe_percentile),
+            "pb_percentile_bonus": calculate_pb_ps_percentile_bonus(pb_percentile),
+            "ps_percentile_bonus": calculate_pb_ps_percentile_bonus(ps_percentile),
             "score": rel_score,
             "max_score": 4.0,
-            "reason": self._rel_reason(pe_percentile, pe_vs_industry, rel_score),
+            "reason": self._rel_reason(pe_percentile, pb_percentile, ps_percentile, rel_score),
         }
 
         # 4.3 长期 PEG（3分）
@@ -375,72 +380,6 @@ class ValuationAnalyzer(AnalyzerBase):
     # 内联评分辅助（用于 detail 展示）
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _pe_base_score(pe: Optional[float]) -> float:
-        if pe is None or pe <= 0 or pe > 100:
-            return 0.0
-        if pe < 12:
-            return 6.0
-        elif pe < 15:
-            return 5.0
-        elif pe < 20:
-            return 4.0
-        elif pe < 25:
-            return 3.0
-        elif pe < 30:
-            return 2.0
-        elif pe < 35:
-            return 1.0
-        return 0.0
-
-    @staticmethod
-    def _pb_bonus(pb: Optional[float]) -> float:
-        if pb is None:
-            return 0.0
-        if pb < 2.0:
-            return 1.0
-        elif pb < 3.0:
-            return 0.5
-        elif pb < 4.0:
-            return 0.0
-        return -0.5
-
-    @staticmethod
-    def _ps_bonus(ps: Optional[float]) -> float:
-        if ps is None:
-            return 0.0
-        if ps < 2.0:
-            return 1.0
-        elif ps < 3.0:
-            return 0.5
-        elif ps < 4.0:
-            return 0.0
-        return -0.5
-
-    @staticmethod
-    def _hist_score(p: Optional[float]) -> float:
-        if p is None:
-            return 0.0
-        if p < 20:
-            return 3.0
-        elif p < 40:
-            return 2.0
-        elif p < 60:
-            return 1.5
-        elif p < 80:
-            return 0.5
-        return 0.0
-
-    @staticmethod
-    def _ind_score(r: Optional[float]) -> float:
-        if r is None:
-            return 0.0
-        if r <= 0.85:
-            return 1.0
-        elif r < 1.15:
-            return 0.5
-        return 0.0
-
     # ------------------------------------------------------------------
     # 定性：增长确定性（3分）
     # ------------------------------------------------------------------
@@ -500,12 +439,14 @@ class ValuationAnalyzer(AnalyzerBase):
         return f"{'，'.join(parts)}，绝对估值得分={score:.1f}分（满分6分）"
 
     @staticmethod
-    def _rel_reason(pe_pct, pe_ind, score) -> str:
+    def _rel_reason(pe_pct, pb_pct, ps_pct, score) -> str:
         parts = []
         if pe_pct is not None:
             parts.append(f"PE历史分位={pe_pct:.1f}%")
-        if pe_ind is not None:
-            parts.append(f"相对行业PE={pe_ind:.2f}")
+        if pb_pct is not None:
+            parts.append(f"PB历史分位={pb_pct:.1f}%")
+        if ps_pct is not None:
+            parts.append(f"PS历史分位={ps_pct:.1f}%")
         return f"{'，'.join(parts)}，相对估值得分={score:.1f}分（满分4分）"
 
     @staticmethod

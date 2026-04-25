@@ -20,21 +20,6 @@ class AkshareBaseFetcher:
             raise RuntimeError(f"akshare 导入失败: {e}")
 
     @staticmethod
-    def _df_to_snippets(df, title_col: str, summary_cols: List[str], url_col: Optional[str] = None) -> List[Dict[str, str]]:
-        """将 DataFrame 转换为统一 snippet 格式。"""
-        if df is None or df.empty:
-            return []
-        snippets = []
-        for _, row in df.iterrows():
-            title = str(row.get(title_col, "")).strip()
-            summary_parts = [str(row.get(c, "")).strip() for c in summary_cols if row.get(c) is not None]
-            summary = " | ".join([p for p in summary_parts if p])
-            url = str(row.get(url_col, "")).strip() if url_col else ""
-            if title or summary:
-                snippets.append({"title": title, "summary": summary, "url": url})
-        return snippets
-
-    @staticmethod
     def _filter_by_keywords(snippets: List[Dict[str, str]], keywords: List[str]) -> List[Dict[str, str]]:
         """按关键词过滤 snippet（标题+摘要匹配任一关键词）。"""
         if not keywords:

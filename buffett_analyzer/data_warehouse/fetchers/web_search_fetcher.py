@@ -28,7 +28,6 @@ class WebSearchFetcher:
     @staticmethod
     def _ddgs_safe():
         """安全实例化 DDGS，抑制 duckduckgo_search 弃用警告。"""
-        import contextlib
         import warnings as _warnings
 
         class _DDGSWrapper:

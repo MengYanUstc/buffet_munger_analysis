@@ -102,60 +102,51 @@ def calculate_absolute_valuation_score(
 
 def calculate_historical_percentile_score(percentile: Optional[float]) -> float:
     """
-    历史估值分位评分（0-3分）。
+    历史PE估值分位评分（0-4分，五档）。
     """
     if percentile is None:
         return 0.0
     if percentile < 20:
-        return 3.0
+        return 4.0
     elif percentile < 40:
-        return 2.0
+        return 3.0
     elif percentile < 60:
-        return 1.5
+        return 2.0
     elif percentile < 80:
-        return 0.5
-    else:
-        return 0.0
-
-
-def calculate_relative_industry_score(relative_ratio: Optional[float]) -> float:
-    """
-    相对行业平均评分（0-1分）。
-    relative_ratio = 公司PE / 行业PE
-    """
-    if relative_ratio is None:
-        return 0.0
-    if relative_ratio <= 0.85:
         return 1.0
-    elif relative_ratio < 1.15:
-        return 0.5
     else:
         return 0.0
+
+
+def calculate_pb_ps_percentile_bonus(percentile: Optional[float]) -> float:
+    """
+    PB/PS历史分位加分（<30%加0.5分）。
+    """
+    if percentile is None:
+        return 0.0
+    if percentile < 30:
+        return 0.5
+    return 0.0
 
 
 def calculate_relative_valuation_score(
-    historical_percentile: Optional[float],
-    relative_industry_ratio: Optional[float],
+    pe_percentile: Optional[float],
+    pb_percentile: Optional[float],
+    ps_percentile: Optional[float],
 ) -> float:
     """
     相对估值综合评分（0-4分）。
+    基于5年历史估值分位：
+    - PE历史分位：0-4分（五档）
+    - PB历史分位<30%：+0.5
+    - PS历史分位<30%：+0.5
     """
-    hist_score = calculate_historical_percentile_score(historical_percentile)
-    ind_score = calculate_relative_industry_score(relative_industry_ratio)
-    base = hist_score + ind_score
+    pe_score = calculate_historical_percentile_score(pe_percentile)
+    pb_bonus = calculate_pb_ps_percentile_bonus(pb_percentile)
+    ps_bonus = calculate_pb_ps_percentile_bonus(ps_percentile)
 
-    consistency_bonus = 0.0
-    hist_low = historical_percentile is not None and historical_percentile < 40
-    hist_high = historical_percentile is not None and historical_percentile > 60
-    ind_low = relative_industry_ratio is not None and relative_industry_ratio <= 0.85
-    ind_high = relative_industry_ratio is not None and relative_industry_ratio >= 1.15
-
-    if hist_low and ind_low:
-        consistency_bonus = 0.5
-    elif hist_high and ind_high:
-        consistency_bonus = -0.5
-
-    return max(0.0, min(4.0, base + consistency_bonus))
+    total = pe_score + pb_bonus + ps_bonus
+    return max(0.0, min(4.0, total))
 
 
 # ------------------------------------------------------------------
@@ -296,14 +287,3 @@ def calculate_dcf_safety_margin_score(
 # ------------------------------------------------------------------
 # 评级
 # ------------------------------------------------------------------
-
-def get_valuation_level(total_score: float) -> str:
-    """根据总分获取估值评级。"""
-    if total_score >= 14:
-        return "极具吸引力"
-    elif total_score >= 10:
-        return "合理偏低"
-    elif total_score >= 6:
-        return "合理"
-    else:
-        return "偏高"

@@ -37,16 +37,6 @@ class BaseSiteFetcher:
         raise NotImplementedError
 
     @staticmethod
-    def _get_soup(url: str, headers: Optional[Dict[str, str]] = None, timeout: int = 10) -> Optional[BeautifulSoup]:
-        try:
-            resp = requests.get(url, headers=headers or {"User-Agent": "Mozilla/5.0"}, timeout=timeout)
-            resp.raise_for_status()
-            return BeautifulSoup(resp.text, "html.parser")
-        except Exception as e:
-            print(f"[{BaseSiteFetcher.__name__}] 请求 {url} 失败: {e}")
-            return None
-
-    @staticmethod
     def _classify_by_keywords(title: str, summary: str = "", url: str = "") -> Dict[str, List[Dict[str, str]]]:
         """
         通用关键词分类，把单条新闻归类到 dividend/mergers/violations/management_holdings。

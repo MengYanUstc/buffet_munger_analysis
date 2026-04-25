@@ -230,23 +230,112 @@ class CacheManager:
     # ------------------------------------------------------------------
     # 股价数据缓存
     # ------------------------------------------------------------------
-    def has_price_data(self, stock_code: str, table: str, min_records: int = 1) -> bool:
-        """检查是否已有指定数量的股价数据。
+    def has_price_data(self, stock_code: str, table: str, min_records: int = 1, max_age_days: int = None) -> bool:
+        """检查是否已有指定数量的股价数据，并可选检查数据是否过期。
         table: 'stock_daily_prices' 或 'stock_weekly_prices'
+        max_age_days: 如果指定，检查最新数据日期距离今天是否超过指定天数
         """
         row = self.db.fetchone(
             f"SELECT COUNT(*) as cnt FROM {table} WHERE stock_code=?",
             (stock_code,)
         )
-        return row is not None and row["cnt"] >= min_records
+        if row is None or row["cnt"] < min_records:
+            return False
+
+        if max_age_days is not None:
+            latest = self.get_latest_price_date(stock_code, table)
+            if latest is None:
+                return False
+            age = (datetime.date.today() - latest).days
+            if age >= max_age_days:
+                return False
+
+        return True
+
+    def get_latest_price_date(self, stock_code: str, table: str) -> Optional[datetime.date]:
+        """获取某股票某价格表中的最新日期。"""
+        row = self.db.fetchone(
+            f"SELECT MAX(trade_date) as latest FROM {table} WHERE stock_code=?",
+            (stock_code,)
+        )
+        if not row or row["latest"] is None:
+            return None
+        return datetime.datetime.strptime(str(row["latest"])[:10], "%Y-%m-%d").date()
 
     def read_prices(self, stock_code: str, table: str) -> pd.DataFrame:
-        """读取股价数据。"""
+        """读取股价数据。使用 SELECT * 兼容 stock_daily_prices 和 stock_weekly_prices 不同列结构。"""
         rows = self.db.fetchall(
+            f"SELECT * FROM {table} WHERE stock_code=? ORDER BY trade_date",
+            (stock_code,)
+        )
+        if not rows:
+            return pd.DataFrame()
+        df = pd.DataFrame([dict(r) for r in rows])
+        # 去掉系统列
+        for drop_col in ["updated_at"]:
+            if drop_col in df.columns:
+                df = df.drop(columns=[drop_col])
+        return df
+
+    def write_prices(self, stock_code: str, table: str, df: pd.DataFrame):
+        """批量写入股价数据。根据 DataFrame 实际列动态生成 INSERT SQL，兼容不同表结构。"""
+        if df.empty:
+            return
+        now = datetime.datetime.now().isoformat()
+
+        # 基础列（所有价格表共有）
+        base_cols = ["trade_date", "open", "high", "low", "close",
+                     "volume", "amount", "amplitude", "change_pct", "turnover"]
+        # 可选列（stock_daily_prices 特有）
+        optional_cols = ["pe_ttm", "pb", "ps_ttm"]
+
+        # 确定实际要写入的列
+        data_cols = [c for c in base_cols if c in df.columns]
+        data_cols += [c for c in optional_cols if c in df.columns]
+
+        # 构建 INSERT SQL
+        all_cols = ["stock_code"] + data_cols + ["updated_at"]
+        placeholders = ",".join(["?"] * len(all_cols))
+        col_names = ",".join(all_cols)
+
+        records = []
+        for _, row in df.iterrows():
+            record = [stock_code]
+            for col in data_cols:
+                val = row.get(col)
+                if col == "trade_date":
+                    # 日期列保持字符串，不转 float
+                    record.append(str(val) if pd.notna(val) else None)
+                else:
+                    record.append(float(val) if pd.notna(val) else None)
+            record.append(now)
+            records.append(tuple(record))
+
+        self.db.execute(
             f"""
-            SELECT stock_code, trade_date, open, high, low, close,
-                   volume, amount, amplitude, change_pct, turnover
-            FROM {table}
+            INSERT OR REPLACE INTO {table}
+            ({col_names})
+            VALUES ({placeholders})
+            """,
+            many=True,
+            parameters=records,
+        )
+
+    # ------------------------------------------------------------------
+    # 月度价格缓存（从日K按月 resample）
+    # ------------------------------------------------------------------
+    def has_monthly_prices(self, stock_code: str, min_records: int = 6) -> bool:
+        row = self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM stock_monthly_prices WHERE stock_code=?",
+            (stock_code,)
+        )
+        return row is not None and row["cnt"] >= min_records
+
+    def read_monthly_prices(self, stock_code: str) -> pd.DataFrame:
+        rows = self.db.fetchall(
+            """
+            SELECT stock_code, trade_date, open, high, low, close, volume, amount
+            FROM stock_monthly_prices
             WHERE stock_code=?
             ORDER BY trade_date
             """,
@@ -256,8 +345,7 @@ class CacheManager:
             return pd.DataFrame()
         return pd.DataFrame([dict(r) for r in rows])
 
-    def write_prices(self, stock_code: str, table: str, df: pd.DataFrame):
-        """批量写入股价数据。"""
+    def write_monthly_prices(self, stock_code: str, df: pd.DataFrame):
         if df.empty:
             return
         now = datetime.datetime.now().isoformat()
@@ -272,19 +360,142 @@ class CacheManager:
                 float(row["close"]) if pd.notna(row.get("close")) else None,
                 float(row["volume"]) if pd.notna(row.get("volume")) else None,
                 float(row["amount"]) if pd.notna(row.get("amount")) else None,
-                float(row["amplitude"]) if pd.notna(row.get("amplitude")) else None,
-                float(row["change_pct"]) if pd.notna(row.get("change_pct")) else None,
-                float(row["turnover"]) if pd.notna(row.get("turnover")) else None,
                 now,
             ))
-
         self.db.execute(
-            f"""
-            INSERT OR REPLACE INTO {table}
-            (stock_code, trade_date, open, high, low, close,
-             volume, amount, amplitude, change_pct, turnover, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            INSERT OR REPLACE INTO stock_monthly_prices
+            (stock_code, trade_date, open, high, low, close, volume, amount, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             many=True,
             parameters=records,
         )
+        self.update_meta(stock_code, "stock_monthly_prices", len(records))
+
+    # ------------------------------------------------------------------
+    # 指数价格缓存（量化交易专用，与报告流程独立）
+    # ------------------------------------------------------------------
+    def has_index_prices(self, index_code: str, table: str, min_records: int = 100, max_age_days: int = 1) -> bool:
+        """检查指数价格缓存是否有效且未过期。"""
+        row = self.db.fetchone(
+            f"SELECT COUNT(*) as cnt, MAX(updated_at) as latest FROM {table} WHERE index_code=?",
+            (index_code,)
+        )
+        if row is None or row["cnt"] < min_records:
+            return False
+        if row["latest"]:
+            latest_dt = datetime.datetime.fromisoformat(row["latest"])
+            if (datetime.datetime.now() - latest_dt).days > max_age_days:
+                return False
+        return True
+
+    def read_index_prices(self, index_code: str, table: str) -> pd.DataFrame:
+        rows = self.db.fetchall(
+            f"""
+            SELECT index_code, trade_date, open, high, low, close, volume, amount
+            FROM {table} WHERE index_code=? ORDER BY trade_date
+            """,
+            (index_code,)
+        )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows])
+
+    def write_index_prices(self, index_code: str, table: str, df: pd.DataFrame):
+        if df.empty:
+            return
+        now = datetime.datetime.now().isoformat()
+        records = []
+        for _, row in df.iterrows():
+            records.append((
+                index_code,
+                str(row.get("trade_date", ""))[:10],
+                float(row["open"]) if pd.notna(row.get("open")) else None,
+                float(row["high"]) if pd.notna(row.get("high")) else None,
+                float(row["low"]) if pd.notna(row.get("low")) else None,
+                float(row["close"]) if pd.notna(row.get("close")) else None,
+                float(row["volume"]) if pd.notna(row.get("volume")) else None,
+                float(row["amount"]) if pd.notna(row.get("amount")) else None,
+                now,
+            ))
+        self.db.execute(
+            f"""
+            INSERT OR REPLACE INTO {table}
+            (index_code, trade_date, open, high, low, close, volume, amount, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            many=True,
+            parameters=records,
+        )
+
+    def get_latest_index_date(self, index_code: str, table: str) -> Optional[datetime.date]:
+        row = self.db.fetchone(
+            f"SELECT MAX(trade_date) as latest FROM {table} WHERE index_code=?",
+            (index_code,)
+        )
+        if row and row["latest"]:
+            return datetime.datetime.strptime(str(row["latest"])[:10], "%Y-%m-%d").date()
+        return None
+
+    # ------------------------------------------------------------------
+    # 季度财务数据缓存
+    # ------------------------------------------------------------------
+    def has_quarterly_financials(self, stock_code: str, min_records: int = 8) -> bool:
+        row = self.db.fetchone(
+            "SELECT COUNT(*) as cnt FROM financial_reports_quarterly WHERE stock_code=?",
+            (stock_code,)
+        )
+        return row is not None and row["cnt"] >= min_records
+
+    def read_quarterly_financials(self, stock_code: str) -> pd.DataFrame:
+        rows = self.db.fetchall(
+            """
+            SELECT report_date, roe, roic, revenue, net_profit,
+                   deduct_net_profit, parent_net_profit, gross_margin,
+                   net_margin, debt_ratio, operating_cash_flow, fcf, capex
+            FROM financial_reports_quarterly
+            WHERE stock_code=?
+            ORDER BY report_date
+            """,
+            (stock_code,)
+        )
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame([dict(r) for r in rows])
+
+    def write_quarterly_financials(self, stock_code: str, df: pd.DataFrame):
+        if df.empty:
+            return
+        now = datetime.datetime.now().isoformat()
+        records = []
+        for _, row in df.iterrows():
+            records.append((
+                stock_code,
+                str(row.get("report_date", ""))[:10],
+                float(row["roe"]) if pd.notna(row.get("roe")) else None,
+                float(row["roic"]) if pd.notna(row.get("roic")) else None,
+                float(row["revenue"]) / 10000.0 if pd.notna(row.get("revenue")) else None,
+                float(row["net_profit"]) / 10000.0 if pd.notna(row.get("net_profit")) else None,
+                float(row["deduct_net_profit"]) / 10000.0 if pd.notna(row.get("deduct_net_profit")) else None,
+                float(row["parent_net_profit"]) / 10000.0 if pd.notna(row.get("parent_net_profit")) else None,
+                float(row["gross_margin"]) if pd.notna(row.get("gross_margin")) else None,
+                float(row["net_margin"]) if pd.notna(row.get("net_margin")) else None,
+                float(row["debt_ratio"]) if pd.notna(row.get("debt_ratio")) else None,
+                float(row["operating_cash_flow"]) / 10000.0 if pd.notna(row.get("operating_cash_flow")) else None,
+                float(row["fcf"]) / 10000.0 if pd.notna(row.get("fcf")) else None,
+                float(row["capex"]) / 10000.0 if pd.notna(row.get("capex")) else None,
+                now,
+            ))
+        self.db.execute(
+            """
+            INSERT OR REPLACE INTO financial_reports_quarterly
+            (stock_code, report_date, roe, roic, revenue, net_profit,
+             deduct_net_profit, parent_net_profit, gross_margin, net_margin,
+             debt_ratio, operating_cash_flow, fcf, capex, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            many=True,
+            parameters=records,
+        )
+        self.update_meta(stock_code, "financial_reports_quarterly", len(records))

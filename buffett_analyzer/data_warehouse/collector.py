@@ -120,7 +120,9 @@ class DataCollector:
                     result["sources"]["valuation"] = "failed"
             else:
                 try:
-                    bs_result = self.bs_fetcher.fetch_valuation(stock_code)
+                    # 优先从 stock_daily_prices 缓存读取日K，传给 baostock_fetcher 计算分位
+                    daily_df = self.cache.read_prices(stock_code, "stock_daily_prices")
+                    bs_result = self.bs_fetcher.fetch_valuation(stock_code, daily_df=daily_df)
                     latest = bs_result.get("latest", {})
                     if latest and latest.get("trade_date"):
                         latest["data_source"] = "baostock"
@@ -128,6 +130,11 @@ class DataCollector:
                         self.cache.update_meta(stock_code, "valuation_metrics", len(bs_result.get("valuation_df", pd.DataFrame())))
                         result["valuation"] = latest
                         result["sources"]["valuation"] = "baostock"
+                        # 如果 baostock_fetcher 自己拉取了日K（缓存缺失时），写入 stock_daily_prices
+                        fetched_daily = bs_result.get("daily_df")
+                        if fetched_daily is not None and not fetched_daily.empty:
+                            self.cache.write_prices(stock_code, "stock_daily_prices", fetched_daily)
+                            self.cache.update_meta(stock_code, "stock_daily_prices", len(fetched_daily))
                     else:
                         result["valuation"] = {}
                         result["sources"]["valuation"] = "failed"
@@ -141,54 +148,129 @@ class DataCollector:
     # ------------------------------------------------------------------
     # 增强收集：包含行业估值 enrich 和联网搜索补缺
     # ------------------------------------------------------------------
+    def _collect_price_incremental(
+        self, stock_code: str, table: str, period: str,
+        fetch_method, min_records: int, max_age_days: int,
+        fetch_full_kwargs: dict = None,
+    ) -> Dict[str, Any]:
+        """通用增量股价收集逻辑。"""
+        if self.cache.has_price_data(stock_code, table, min_records=min_records, max_age_days=max_age_days):
+            # 缓存有效且未过期
+            df = self.cache.read_prices(stock_code, table)
+            return {"df": df, "source": "cache"}
+
+        # 检查是否有旧缓存需要增量更新
+        latest_date = self.cache.get_latest_price_date(stock_code, table)
+        if latest_date is not None:
+            start_date = latest_date + datetime.timedelta(days=1)
+            today = datetime.date.today()
+            if start_date > today:
+                # 缓存已经是最新的（今天刚写入），无需拉取
+                df = self.cache.read_prices(stock_code, table)
+                return {"df": df, "source": "cache"}
+
+            # 增量拉取：从最新日期+1天开始
+            df_new = fetch_method(stock_code, start_date=start_date)
+            if not df_new.empty:
+                # 写入增量数据（INSERT OR REPLACE 会自动覆盖重复日期）
+                self.cache.write_prices(stock_code, table, df_new)
+                self.cache.update_meta(stock_code, table, len(df_new))
+                # 读取合并后的完整数据
+                df_full = self.cache.read_prices(stock_code, table)
+                return {"df": df_full, "source": "incremental"}
+            else:
+                # 增量返回空（如周末无交易），回退到旧缓存
+                df = self.cache.read_prices(stock_code, table)
+                return {"df": df if df is not None else pd.DataFrame(), "source": "cache"}
+
+        # 无缓存，全量拉取
+        kwargs = fetch_full_kwargs or {}
+        df = fetch_method(stock_code, **kwargs)
+        if not df.empty:
+            self.cache.write_prices(stock_code, table, df)
+            self.cache.update_meta(stock_code, table, len(df))
+            return {"df": df, "source": "full"}
+        return {"df": pd.DataFrame(), "source": "failed"}
+
     def collect_prices(self, stock_code: str) -> Dict[str, Any]:
-        """拉取并缓存近1年日K和近5年周K，返回股价数据摘要。"""
+        """拉取并缓存近1年日K和近5年周K，支持增量更新，返回股价数据摘要。"""
+        import datetime
         result = {"daily": None, "weekly": None, "sources": {}}
 
-        # 日K：近1年
-        if self.cache.has_price_data(stock_code, "stock_daily_prices", min_records=200):
-            result["daily"] = self.cache.read_prices(stock_code, "stock_daily_prices")
-            result["sources"]["daily"] = "cache"
-        else:
-            df_daily = self.price_fetcher.fetch_daily(stock_code, years=1)
-            if not df_daily.empty:
-                self.cache.write_prices(stock_code, "stock_daily_prices", df_daily)
-                self.cache.update_meta(stock_code, "stock_daily_prices", len(df_daily))
-                result["daily"] = df_daily
-                result["sources"]["daily"] = "akshare"
-            else:
-                result["sources"]["daily"] = "failed"
+        # 日K：近5年，超过1天未更新则增量拉取
+        daily_result = self._collect_price_incremental(
+            stock_code, "stock_daily_prices", "daily",
+            self.price_fetcher.fetch_daily, min_records=1000, max_age_days=1,
+            fetch_full_kwargs={"years": 5},
+        )
+        result["daily"] = daily_result["df"]
+        result["sources"]["daily"] = daily_result["source"]
 
-        # 周K：近5年
-        if self.cache.has_price_data(stock_code, "stock_weekly_prices", min_records=200):
-            result["weekly"] = self.cache.read_prices(stock_code, "stock_weekly_prices")
-            result["sources"]["weekly"] = "cache"
+        # 周K：近5年，超过7天未更新则增量拉取
+        weekly_result = self._collect_price_incremental(
+            stock_code, "stock_weekly_prices", "weekly",
+            self.price_fetcher.fetch_weekly, min_records=200, max_age_days=7,
+            fetch_full_kwargs={"years": 5},
+        )
+        result["weekly"] = weekly_result["df"]
+        result["sources"]["weekly"] = weekly_result["source"]
+
+        return result
+
+    def collect_monthly_prices(self, stock_code: str) -> Dict[str, Any]:
+        """拉取并缓存近3年月K（从日K resample），返回月度价格摘要。"""
+        result = {"monthly": None, "source": "cache"}
+
+        if self.cache.has_monthly_prices(stock_code, min_records=6):
+            result["monthly"] = self.cache.read_monthly_prices(stock_code)
         else:
-            df_weekly = self.price_fetcher.fetch_weekly(stock_code, years=5)
-            if not df_weekly.empty:
-                self.cache.write_prices(stock_code, "stock_weekly_prices", df_weekly)
-                self.cache.update_meta(stock_code, "stock_weekly_prices", len(df_weekly))
-                result["weekly"] = df_weekly
-                result["sources"]["weekly"] = "akshare"
+            df_monthly = self.price_fetcher.fetch_monthly(stock_code, years=3)
+            if not df_monthly.empty:
+                self.cache.write_monthly_prices(stock_code, df_monthly)
+                self.cache.update_meta(stock_code, "stock_monthly_prices", len(df_monthly))
+                result["monthly"] = df_monthly
+                result["source"] = "resample"
             else:
-                result["sources"]["weekly"] = "failed"
+                result["source"] = "failed"
+
+        return result
+
+    def collect_quarterly_financials(self, stock_code: str) -> Dict[str, Any]:
+        """拉取并缓存近3年季度财务数据。"""
+        result = {"financial_reports": None, "source": "cache"}
+
+        if self.cache.has_quarterly_financials(stock_code, min_records=8):
+            result["financial_reports"] = self.cache.read_quarterly_financials(stock_code)
+        else:
+            fetch_result = self.ak_fetcher.fetch_quarterly_financial_data(stock_code)
+            df_q = fetch_result["financial_reports"]
+            if not df_q.empty:
+                if pd.api.types.is_datetime64_any_dtype(df_q['report_date']):
+                    df_q['report_date'] = df_q['report_date'].dt.strftime('%Y-%m-%d')
+                self.cache.write_quarterly_financials(stock_code, df_q)
+                self.cache.update_meta(stock_code, "financial_reports_quarterly", len(df_q))
+                result["financial_reports"] = self.cache.read_quarterly_financials(stock_code)
+                result["source"] = "akshare"
+            else:
+                result["financial_reports"] = pd.DataFrame()
+                result["source"] = "failed"
 
         return result
 
     def collect_enhanced(self, stock_code: str) -> Dict[str, Any]:
         """
-        1) 执行基础 collect
-        2) 拉取股价数据（日K/周K）
+        1) 拉取股价数据（日K/周K）—— 先执行，确保 stock_daily_prices 有数据
+        2) 执行基础 collect —— bs_fetcher 可复用 stock_daily_prices
         3) enrich 行业估值
         4) 检测缺失字段（港股历史分位）
         5) 联网搜索补缺
         6) 返回完整数据
         """
-        # 1. 基础收集
-        result = self.collect(stock_code)
-
-        # 2. 股价数据
+        # 1. 股价数据（先执行，确保 stock_daily_prices 有数据供 bs_fetcher 复用）
         price_result = self.collect_prices(stock_code)
+
+        # 2. 基础收集
+        result = self.collect(stock_code)
         result["prices"] = price_result
 
         # 3. 行业估值 enrich（无论估值是否来自缓存，都重新 enrich）

@@ -314,3 +314,59 @@ class AkShareFetcher:
         if is_hk_stock(stock_code):
             return self.fetch_hk_financial_data(stock_code)
         return self.fetch_a_share_financial_data(stock_code)
+
+    # ------------------------------------------------------------------
+    # 季度财务数据获取（A股）
+    # ------------------------------------------------------------------
+    def fetch_quarterly_financial_data(self, stock_code: str) -> Dict[str, Any]:
+        """获取 A股 季度财务数据，不过滤年报，保留所有季度报告。"""
+        df_ind = pd.DataFrame()
+        try:
+            df_ind = ak.stock_financial_analysis_indicator_em(symbol=self._fmt_indicator(stock_code))
+            df_ind = self._norm_date(df_ind)
+            # 不过滤年报，保留所有季度
+            for col in ['ROEJQ', 'ROIC', 'TOTALOPERATEREVE', 'XSMLL', 'XSJLL', 'ZCFZL', 'PARENTNETPROFIT', 'KCFJCXSYJLR']:
+                if col in df_ind.columns:
+                    df_ind[col] = self._to_numeric(df_ind[col])
+            df_ind = df_ind[['REPORT_DATE', 'ROEJQ', 'ROIC', 'TOTALOPERATEREVE', 'XSMLL', 'XSJLL', 'ZCFZL', 'PARENTNETPROFIT', 'KCFJCXSYJLR']]
+        except Exception as e:
+            print(f"[AkShareFetcher] A股季度财务指标获取失败 ({stock_code}): {e}")
+
+        df_profit = pd.DataFrame()
+        try:
+            df_profit = ak.stock_profit_sheet_by_report_em(symbol=self._fmt_report(stock_code))
+            df_profit = self._norm_date(df_profit)
+            # 不过滤年报
+            revenue_col = None
+            if 'TOTAL_OPERATE_INCOME' in df_profit.columns:
+                revenue_col = 'TOTAL_OPERATE_INCOME'
+            elif 'OPERATE_INCOME' in df_profit.columns:
+                revenue_col = 'OPERATE_INCOME'
+            desired_cols = ['REPORT_DATE', 'NETPROFIT', 'DEDUCT_PARENT_NETPROFIT', 'PARENT_NETPROFIT']
+            if revenue_col:
+                desired_cols.insert(1, revenue_col)
+            existing_cols = [c for c in desired_cols if c in df_profit.columns]
+            for col in existing_cols:
+                if col != 'REPORT_DATE':
+                    df_profit[col] = self._to_numeric(df_profit[col])
+            df_profit = df_profit[existing_cols]
+        except Exception as e:
+            print(f"[AkShareFetcher] A股季度利润表获取失败 ({stock_code}): {e}")
+
+        df_cf = pd.DataFrame()
+        try:
+            df_cf = ak.stock_cash_flow_sheet_by_report_em(symbol=self._fmt_report(stock_code))
+            df_cf = self._norm_date(df_cf)
+            # 不过滤年报
+            for col in ['NETCASH_OPERATE', 'CONSTRUCT_LONG_ASSET']:
+                if col in df_cf.columns:
+                    df_cf[col] = self._to_numeric(df_cf[col])
+            df_cf = df_cf[['REPORT_DATE', 'NETCASH_OPERATE', 'CONSTRUCT_LONG_ASSET']]
+        except Exception as e:
+            print(f"[AkShareFetcher] A股季度现金流量表获取失败 ({stock_code}): {e}")
+
+        result = self._merge_and_clean(df_ind, df_profit, df_cf)
+        # 季度数据保留近 12 个季度（3 年）
+        if not result["financial_reports"].empty:
+            result["financial_reports"] = result["financial_reports"].sort_values("report_date").tail(12)
+        return result

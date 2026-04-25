@@ -3,7 +3,6 @@
 根据巴菲特-芒格投资理念，对ROE、ROIC、增长、负债等维度进行定量评分。
 """
 
-import math
 from typing import List, Union, Dict, Any
 import numpy as np
 

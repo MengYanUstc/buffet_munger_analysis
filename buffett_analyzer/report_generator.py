@@ -197,14 +197,6 @@ class ReportGenerator:
                 return default
         return d
 
-    def _r(self, ctx, module: str, key: str, default=None):
-        """快捷获取某模块维度数据。"""
-        return self._deep_get(ctx["reports"], [module, "dimensions", key], default)
-
-    def _rs(self, ctx, module: str, key: str, default=None):
-        """快捷获取某模块 summary 数据。"""
-        return self._deep_get(ctx["reports"], [module, "summary", key], default)
-
     def _fmt_chain(self, records: List[Dict], key: str, suffix: str = "") -> str:
         """将多年数据格式化为 Year1→Year2→... 链条。"""
         vals = [r.get(key) for r in records]
@@ -400,11 +392,9 @@ class ReportGenerator:
             f"- 5年平均ROE：{self._safe(roe.get('avg_roe'), '{}%', '数据暂缺')}",
             f"- 各年份ROE：{self._fmt_chain(records, 'roe', '%')}",
             "- ROE趋势分析：" + ("ROE 整体稳定" if roe.get('avg_roe', 0) >= 15 else "ROE 水平一般，需关注盈利能力持续性。"),
-            "- ROE与行业对比：数据暂缺",
             f"- **最终得分：{roe.get('score', 0)}/4**",
             "",
             "### ROE稳定性评分（✅ 完全定量）",
-            f"- 5年平均ROE：{self._safe(roe_stab.get('roe_mean'), '{}%', '数据暂缺')}",
             f"- ROE标准差：{self._safe(roe_stab.get('roe_std'), '{}', '数据暂缺')}",
             f"- 稳定性级别：{roe_stab.get('stability_level', '数据暂缺')}",
             f"- 趋势方向：{roe_stab.get('trend_direction', '数据暂缺')}",
@@ -673,8 +663,9 @@ class ReportGenerator:
             f"- **最终得分：{abs_v.get('score', 0)}/6**",
             "",
             "### 相对估值（✅ 完全定量）",
-            f"- 历史估值分位：{self._safe(rel_v.get('pe_percentile_5y'), '{:.1f}%', '数据暂缺')}",
-            f"- 相对行业比率：{self._safe(rel_v.get('pe_vs_industry'), '{:.2f}', '数据暂缺')}",
+            f"- PE历史估值分位（5年）：{self._safe(rel_v.get('pe_percentile_5y'), '{:.1f}%', '数据暂缺')}",
+            f"- PB历史估值分位（5年）：{self._safe(rel_v.get('pb_percentile_5y'), '{:.1f}%', '数据暂缺')}",
+            f"- PS历史估值分位（5年）：{self._safe(rel_v.get('ps_percentile_5y'), '{:.1f}%', '数据暂缺')}",
             "- 相对估值深度分析：" + ("当前估值处于历史较低分位，具备相对安全边际。" if rel_v.get('score', 0) >= 2 else "当前估值处于历史中高分位，需关注相对估值风险。"),
             f"- **最终得分：{rel_v.get('score', 0)}/4**",
             "",
@@ -731,7 +722,7 @@ class ReportGenerator:
         lines.append(
             f"{ctx['company_name']}估值得分 {val.get('total_score', 0)}/20 分。"
             f"{'当前估值具备较高安全边际' if val.get('total_score', 0) >= 14 else '当前估值处于合理区间' if val.get('total_score', 0) >= 10 else '当前估值偏高或增长确定性不足'}，"
-            f"{'DCF测算显示内在价值高于市值' if dcf.get('safety_margin', 0) > 1.2 else 'DCF安全边际一般'}。"
+            f"{'DCF测算显示内在价值高于市值' if (dcf.get('safety_margin') or 0) > 1.2 else 'DCF安全边际一般'}。"
         )
         return "\n".join(lines)
 

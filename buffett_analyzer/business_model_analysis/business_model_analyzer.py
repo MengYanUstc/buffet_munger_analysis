@@ -35,11 +35,15 @@ class BusinessModelAnalyzer(AnalyzerBase):
         # 1. 从统一缓存读取定性评分 + 行业分类/发展阶段
         llm_result = self._get_qualitative_result()
 
-        # 2. 获取 LLM 判断的行业分类
+        # 2. 获取 LLM 判断的行业分类和发展阶段
         industry_classification = llm_result.get("industry_classification", "medium")
+        # 兼容 LLM 可能返回 development_stage 或 growth_stage 两种字段名
+        development_stage = llm_result.get("development_stage")
+        if not development_stage:
+            development_stage = llm_result.get("growth_stage", "mature")
 
         # 3. 从数据库读取并计算资本开支定量评分（4分）
-        capex_result = self._compute_capex_quantitative(industry_classification)
+        capex_result = self._compute_capex_quantitative(industry_classification, development_stage)
 
         # 4. 从数据库读取并计算自由现金流定量评分（6分）
         fcf_result = self._compute_fcf_quantitative()
@@ -69,10 +73,12 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 "max_score": 4.0,
                 "base_score": capex_result["base_score"],
                 "stability_adjustment": capex_result["stability_adjustment"],
+                "phase_bonus": capex_result.get("phase_bonus", 0.0),
                 "raw_score": capex_result["raw_score"],
                 "avg_capex_ratio": capex_result["avg_capex_ratio"],
                 "cv": capex_result.get("cv"),
                 "industry_type": capex_result["industry_type"],
+                "phase_type": capex_result.get("phase_type", "mature"),
                 "reason": capex_result["reason"],
             }
         else:
@@ -174,7 +180,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             return self._empty_result(str(e))
 
     def _compute_capex_quantitative(
-        self, industry_classification: str
+        self, industry_classification: str, development_stage: str
     ) -> Dict[str, Any]:
         """
         从数据库读取资本开支数据，计算定量评分（4分）。
@@ -195,6 +201,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
                 capex_values=capex_values,
                 net_profit_values=profit_values,
                 industry_type=industry_classification,
+                phase_type=development_stage,
             )
             result["source_note"] = "数据来源：SQLite 缓存"
             return result
@@ -359,6 +366,8 @@ class BusinessModelAnalyzer(AnalyzerBase):
   "stock_code": "{stock_code}",
   "industry_classification": "light/medium/heavy",
   "industry_classification_desc": "具体说明",
+  "development_stage": "startup/growth/mature/decline",
+  "development_stage_desc": "具体说明",
   "business_model_description": "200-500字商业模式描述",
   "income_stability": {{
     "score": X.X,
@@ -393,6 +402,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
     def _empty_result(reason: str) -> Dict[str, Any]:
         return {
             "industry_classification": "medium",
+            "development_stage": "mature",
             "business_model_description": f"LLM 调用失败: {reason}",
             "income_stability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "business_model_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
