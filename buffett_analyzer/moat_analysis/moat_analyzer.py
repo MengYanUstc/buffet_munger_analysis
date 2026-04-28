@@ -1,10 +1,11 @@
 """
 护城河分析主模块（Module 3）
-总分 30 分 = 毛利率绝对值(2分, 代码定量) + 毛利率稳定性(3分, 代码定量) + 定性分析(25分, Coze LLM)
+总分 30 分 = 毛利率绝对值(2.5分, 代码定量) + 毛利率稳定性(2.5分, 代码定量) + 定性分析(25分, Coze LLM)
 """
 
 import json
 import os
+import re
 from typing import Dict, Any, List
 
 from ..core import AnalyzerBase, AnalysisReport
@@ -28,7 +29,7 @@ class MoatAnalyzer(AnalyzerBase):
         # 1. 从数据库读取毛利率数据（定量基础）
         gm_data = self._fetch_gross_margin_data()
 
-        # 2. 代码计算毛利率评分（5分 = 绝对值2分 + 稳定性3分）
+        # 2. 代码计算毛利率评分（5分 = 绝对值2.5分 + 稳定性2.5分）
         gm_result = compute_gross_margin_score(gm_data.get("values", []))
 
         # 3. 从统一缓存读取护城河定性分析（25分）
@@ -37,31 +38,31 @@ class MoatAnalyzer(AnalyzerBase):
         # 4. 汇总
         dimensions = {}
 
-        # 毛利率绝对值维度（2分）
+        # 毛利率绝对值维度（2.5分）
         gm_abs = gm_result.get("absolute", {})
         if gm_abs.get("score") is not None:
             dimensions["gross_margin_absolute"] = {
                 "score": gm_abs["score"],
-                "max_score": 2.0,
+                "max_score": 2.5,
                 "avg_margin": gm_abs["avg_margin"],
                 "reason": (
                     f"近5年平均毛利率 {gm_abs['avg_margin']}%，"
-                    f"对应绝对值得分 {gm_abs['score']}/2.0"
+                    f"对应绝对值得分 {gm_abs['score']}/2.5"
                 ),
             }
         else:
             dimensions["gross_margin_absolute"] = {
                 "score": 0.0,
-                "max_score": 2.0,
+                "max_score": 2.5,
                 "reason": "毛利率数据不足，无法评分",
             }
 
-        # 毛利率稳定性维度（3分）
+        # 毛利率稳定性维度（2.5分）
         gm_stab = gm_result.get("stability", {})
         if gm_stab.get("final_score") is not None:
             dimensions["gross_margin_stability"] = {
                 "score": gm_stab["final_score"],
-                "max_score": 3.0,
+                "max_score": 2.5,
                 "base_score": gm_stab["base_score"],
                 "trend_adjustment": gm_stab["trend_adjustment"],
                 "cv": gm_stab.get("cv"),
@@ -74,13 +75,13 @@ class MoatAnalyzer(AnalyzerBase):
                     f"（标准差{gm_stab['std']}% / 均值{gm_result.get('absolute', {}).get('avg_margin')}%），"
                     f"趋势为'{gm_stab['trend'].get('trend_direction')}'，"
                     f"基础分 {gm_stab['base_score']} + 趋势调整 {gm_stab['trend_adjustment']} = "
-                    f"最终分 {gm_stab['final_score']}/3.0"
+                    f"最终分 {gm_stab['final_score']}/2.5"
                 ),
             }
         else:
             dimensions["gross_margin_stability"] = {
                 "score": 0.0,
-                "max_score": 3.0,
+                "max_score": 2.5,
                 "reason": "毛利率数据不足，无法评分",
             }
 
@@ -94,13 +95,35 @@ class MoatAnalyzer(AnalyzerBase):
         qualitative_total = 0.0
         for key, name, max_s in qualitative_dims:
             dim = llm_result.get(key, {})
-            score = dim.get("score", 0.0)
-            reason = dim.get("reason", "")
-            dimensions[key] = {
+            
+            # 护城河可持续性：优先使用结构化字段公式计算
+            if key == "moat_sustainability" and "history_duration_years" in dim:
+                score = self._compute_sustainability_score(dim)
+                reason = dim.get("reason", "")
+                # 在 reason 中补充公式计算细节
+                detail = (
+                    f"【公式计算】历史时长{dim.get('history_duration_years',0)}年"
+                    f" + 周期考验{dim.get('cycle_tests_count',0)}轮"
+                    f" + 突破难度{dim.get('breakthrough_difficulty','')}"
+                    f" + 趋势{dim.get('trend_judgment','')}"
+                    f" = 得分{score}分。"
+                )
+                reason = detail + " " + reason if reason else detail
+            else:
+                score = dim.get("score", 0.0)
+                reason = dim.get("reason", "")
+            
+            dim_data = {
                 "score": score,
                 "max_score": max_s,
                 "reason": reason,
             }
+            # 如果是护城河可持续性，把结构化字段也带过去供报告渲染
+            if key == "moat_sustainability":
+                for field in ["history_duration_years", "cycle_tests_count", "breakthrough_difficulty", "trend_judgment"]:
+                    if field in dim:
+                        dim_data[field] = dim[field]
+            dimensions[key] = dim_data
             qualitative_total += score
 
         # 总分
@@ -166,8 +189,8 @@ class MoatAnalyzer(AnalyzerBase):
             stab_part = gm_result.get("stability", {})
             gm_text = (
                 f"近5年毛利率数据：{gm_result['values']}%，"
-                f"平均毛利率 {abs_part.get('avg_margin', 'N/A')}%（绝对值得分 {abs_part.get('score', 'N/A')}/2），"
-                f"变异系数（CV）{stab_part.get('cv', 'N/A')}%（稳定性得分 {stab_part.get('final_score', 'N/A')}/3），"
+                f"平均毛利率 {abs_part.get('avg_margin', 'N/A')}%（绝对值得分 {abs_part.get('score', 'N/A')}/2.5），"
+                f"变异系数（CV）{stab_part.get('cv', 'N/A')}%（稳定性得分 {stab_part.get('final_score', 'N/A')}/2.5），"
                 f"趋势：{stab_part.get('trend', {}).get('trend_direction', 'N/A')}"
             )
 
@@ -264,8 +287,10 @@ class MoatAnalyzer(AnalyzerBase):
     "reason": "详细说明，引用具体事实"
   }},
   "moat_sustainability": {{
-    "score": X.X,
-    "max_score": 7.0,
+    "history_duration_years": XX,
+    "cycle_tests_count": X,
+    "breakthrough_difficulty": "等级(分值)",
+    "trend_judgment": "等级(分值)",
     "reason": "详细说明，引用具体事实"
   }},
   "pricing_power": {{
@@ -296,6 +321,75 @@ class MoatAnalyzer(AnalyzerBase):
             "pricing_power": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "qualitative_total": 0.0,
         }
+
+    @staticmethod
+    def _compute_sustainability_score(data: dict) -> float:
+        """
+        基于 LLM 返回的结构化字段计算护城河可持续性得分（满分7分，步长0.5）。
+
+        字段：
+          - history_duration_years: 历史时长（年）
+          - cycle_tests_count: 周期考验轮数
+          - breakthrough_difficulty: 突破难度等级（如"很难(3)"）
+          - trend_judgment: 趋势判断等级（如"加强(3)"）
+        """
+        years = data.get("history_duration_years", 0)
+        cycles = data.get("cycle_tests_count", 0)
+        difficulty_str = str(data.get("breakthrough_difficulty", ""))
+        trend_str = str(data.get("trend_judgment", ""))
+
+        def _extract_level(text: str) -> int:
+            m = re.search(r'\((\d+)\)', text)
+            if m:
+                return int(m.group(1))
+            m = re.search(r'\d+', text)
+            return int(m.group(0)) if m else 0
+
+        difficulty = _extract_level(difficulty_str)
+        trend = _extract_level(trend_str)
+
+        # 1. 历史时长基础分
+        if years > 50:
+            base = 5.0
+        elif years >= 30:
+            base = 4.0
+        elif years >= 20:
+            base = 3.0
+        elif years >= 10:
+            base = 2.0
+        elif years >= 5:
+            base = 1.0
+        else:
+            base = 0.5
+
+        # 2. 周期考验调整
+        if cycles >= 3:
+            cycle_adj = 1.0
+        elif cycles >= 2:
+            cycle_adj = 0.5
+        else:
+            cycle_adj = 0.0
+
+        # 3. 突破难度调整
+        if difficulty >= 4:
+            diff_adj = 1.0
+        elif difficulty >= 3:
+            diff_adj = 0.5
+        elif difficulty >= 2:
+            diff_adj = 0.0
+        else:
+            diff_adj = -0.5
+
+        # 4. 趋势判断调整
+        if trend >= 3:
+            trend_adj = 0.5
+        elif trend >= 2:
+            trend_adj = 0.0
+        else:
+            trend_adj = -0.5
+
+        total = base + cycle_adj + diff_adj + trend_adj
+        return round(max(0, min(7, total)) * 2) / 2
 
     @staticmethod
     def _rating(total: float) -> str:

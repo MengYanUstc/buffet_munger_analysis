@@ -105,7 +105,10 @@ class IndexCollector:
         self, index_code: str, table: str, freq: str, years: int
     ) -> Dict[str, Any]:
         """内部统一收集逻辑，支持增量更新。"""
-        max_age = 1 if freq == "d" else 7
+        # 日K动态判断：收盘后(16:00+)要求数据必须到当天，收盘前允许到昨天
+        now = datetime.datetime.now()
+        market_closed = now.hour >= 16
+        max_age = 0 if (freq == "d" and market_closed) else (1 if freq == "d" else 7)
         min_records = 200 if freq == "d" else 50
 
         # 1. 缓存有效且未过期 → 直接返回

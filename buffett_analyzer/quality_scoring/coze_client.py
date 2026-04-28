@@ -7,6 +7,7 @@ Coze LLM 客户端封装
 import json
 import os
 import re
+import uuid
 from typing import Dict, Any, Optional
 
 import requests
@@ -23,6 +24,7 @@ class CozeLLMClient:
       - 使用 requests POST + SSE 流解析（非 OpenAI SDK）
       - 返回的文本在 SSE event 的 content.answer 字段中
       - 自动拼接流式分片并提取 JSON
+      - 每次调用生成新的 session_id，避免历史记忆污染评分
     """
 
     def __init__(
@@ -35,7 +37,8 @@ class CozeLLMClient:
         self.api_token = api_token or os.getenv("COZE_API_TOKEN", "")
         self.base_url = base_url or os.getenv("COZE_BASE_URL", "https://6n7dqg7m2x.coze.site/stream_run")
         self.project_id = project_id or os.getenv("COZE_PROJECT_ID", "7630103598810136595")
-        self.session_id = session_id or os.getenv("COZE_SESSION_ID", "zv8l_1tiNT4ISIMpuHwf0")
+        # session_id 仅作为 fallback，每次 call() 都会生成新的
+        self._fallback_session = session_id or os.getenv("COZE_SESSION_ID", "zv8l_1tiNT4ISIMpuHwf0")
 
     def is_configured(self) -> bool:
         return bool(self.api_token)
@@ -73,6 +76,8 @@ class CozeLLMClient:
             "Accept": "text/event-stream",
         }
 
+        # 每次调用生成新的 session_id，避免历史记忆污染评分结果
+        new_session_id = str(uuid.uuid4())
         payload = {
             "content": {
                 "query": {
@@ -85,7 +90,7 @@ class CozeLLMClient:
                 }
             },
             "type": "query",
-            "session_id": self.session_id,
+            "session_id": new_session_id,
             "project_id": self.project_id,
         }
 

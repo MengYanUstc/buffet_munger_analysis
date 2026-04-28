@@ -20,7 +20,7 @@ from .bollinger import calculate_bollinger
 from .momentum import calculate_momentum
 
 
-def scan_high_score_stocks(reports_dir="reports", min_score=70.0):
+def scan_high_score_stocks(reports_dir="reports/latest", min_score=70.0):
     stock_map = {}
     for fname in os.listdir(reports_dir):
         if not fname.endswith(".md"):
@@ -210,7 +210,7 @@ def _get_stock_data(cache, code, name, report_score=None):
     }
 
 
-def generate_momentum_report(db_path=None, reports_dir="reports"):
+def generate_momentum_report(db_path=None, reports_dir="reports/latest"):
     db = Database(db_path)
     cache = CacheManager(db)
 
@@ -253,6 +253,7 @@ def generate_momentum_report(db_path=None, reports_dir="reports"):
         ("002142", "宁波银行"),
         ("002415", "海康威视"),
         ("000333", "美的集团"),
+        ("600298", "安琪酵母"),
     ]
 
     watch_data = []

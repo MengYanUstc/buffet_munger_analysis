@@ -380,15 +380,20 @@ class CacheManager:
     # 指数价格缓存（量化交易专用，与报告流程独立）
     # ------------------------------------------------------------------
     def has_index_prices(self, index_code: str, table: str, min_records: int = 100, max_age_days: int = 1) -> bool:
-        """检查指数价格缓存是否有效且未过期。"""
+        """检查指数价格缓存是否有效且未过期。
+        
+        注意：判断"过期"的依据是数据本身的最新交易日期(trade_date)，
+        而不是缓存写入时间(updated_at)，否则收盘后新数据永远拉不到。
+        """
         row = self.db.fetchone(
-            f"SELECT COUNT(*) as cnt, MAX(updated_at) as latest FROM {table} WHERE index_code=?",
+            f"SELECT COUNT(*) as cnt, MAX(trade_date) as latest FROM {table} WHERE index_code=?",
             (index_code,)
         )
         if row is None or row["cnt"] < min_records:
             return False
         if row["latest"]:
-            latest_dt = datetime.datetime.fromisoformat(row["latest"])
+            latest_dt = datetime.datetime.strptime(str(row["latest"])[:10], "%Y-%m-%d")
+            # 数据最新交易日期距离今天超过 max_age_days 天 → 过期
             if (datetime.datetime.now() - latest_dt).days > max_age_days:
                 return False
         return True

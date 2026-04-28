@@ -94,23 +94,15 @@
 | < 1.00 | 0.5 |
 | >= 1.00 | 0.0 |
 
-### 4.2 稳定性调整（CV 变异系数）
-
-| CV 范围 | 调整 |
-|---------|------|
-| < 0.15 | +0.5 |
-| < 0.35 | +0.25 |
-| < 0.55 | 0 |
-| < 0.75 | -0.25 |
-| >= 0.75 | -0.5 |
-
-### 4.3 阶段找补
-- startup / growth（初创/成长期）：+0.25 分
+### 4.2 阶段找补
+- startup / growth（初创/成长期）：+0.5 分
 - mature / decline（成熟/衰退期）：0 分
 
-### 4.4 最终分
+### 4.3 最终分
 
-**final_score** = max(0, min(2, 基础分 + CV调整 + 阶段找补))
+**final_score** = round(max(0, min(2, 基础分 + 阶段找补)) * 2) / 2
+
+（只看比率，不考虑波动，结果以 0.5 为步长）
 
 **数据流**：`SQLite -> read_financial_reports() -> capex + parent_net_profit + industry_type + development_stage -> compute_capex_score()`
 

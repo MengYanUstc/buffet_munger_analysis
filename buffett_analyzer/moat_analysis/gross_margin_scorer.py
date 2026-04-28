@@ -1,8 +1,8 @@
 """
 毛利率评分工具（定量部分，满分 5 分）
 拆分为：
-  - 毛利率绝对值评分（2 分）
-  - 毛利率稳定性评分（3 分）
+  - 毛利率绝对值评分（2.5 分）
+  - 毛利率稳定性评分（2.5 分）
 """
 
 from typing import List, Dict, Any
@@ -10,7 +10,7 @@ import numpy as np
 
 
 # ------------------------------------------------------------------
-# 1. 毛利率绝对值评分（2 分）
+# 1. 毛利率绝对值评分（2.5 分）
 # ------------------------------------------------------------------
 
 def calculate_gross_margin_absolute_score(avg_gross_margin: float) -> float:
@@ -21,22 +21,22 @@ def calculate_gross_margin_absolute_score(avg_gross_margin: float) -> float:
         avg_gross_margin: 过去5年平均毛利率（百分比，如 45.2 表示 45.2%）
 
     Returns:
-        毛利率绝对值评分（0-2分）
+        毛利率绝对值评分（0-2.5分，步长0.5）
     """
     if avg_gross_margin >= 50:
-        return 2.0
+        return 2.5
     elif avg_gross_margin >= 40:
-        return 1.5
+        return 2.0
     elif avg_gross_margin >= 30:
-        return 1.0
+        return 1.5
     elif avg_gross_margin >= 20:
-        return 0.5
+        return 1.0
     else:
         return 0.0
 
 
 # ------------------------------------------------------------------
-# 2. 毛利率稳定性评分（3 分）
+# 2. 毛利率稳定性评分（2.5 分）
 # ------------------------------------------------------------------
 
 def calculate_gross_margin_stability_base_score(gross_margin_cv: float) -> float:
@@ -47,14 +47,19 @@ def calculate_gross_margin_stability_base_score(gross_margin_cv: float) -> float
         gross_margin_cv: 过去5年毛利率变异系数（CV = 标准差 / 均值），小数形式
 
     Returns:
-        毛利率稳定性基础分（0-3分）
+        毛利率稳定性基础分（0-2.5分，步长0.5）
+        阈值: 3%/5%/7%/9%/11%，按0.5分递减
     """
     if gross_margin_cv <= 0.03:
-        return 3.0
+        return 2.5
     elif gross_margin_cv <= 0.05:
         return 2.0
-    elif gross_margin_cv <= 0.08:
+    elif gross_margin_cv <= 0.07:
+        return 1.5
+    elif gross_margin_cv <= 0.09:
         return 1.0
+    elif gross_margin_cv <= 0.11:
+        return 0.5
     else:
         return 0.0
 
@@ -65,11 +70,14 @@ def calculate_gross_margin_trend(gross_margin_years: List[float]) -> Dict[str, A
     趋势差值 = (后2年平均 - 前2年平均)
 
     Args:
-        gross_margin_years: 过去5年毛利率数据列表，[year1, year2, year3, year4, year5]
+        gross_margin_years: 毛利率数据列表（按时间顺序），函数内部自动取最近5年
 
     Returns:
         包含趋势分析结果的字典
     """
+    # 只取最近5年数据
+    gross_margin_years = gross_margin_years[-5:] if len(gross_margin_years) > 5 else gross_margin_years
+
     if len(gross_margin_years) < 5:
         return {
             "trend_diff": None,
@@ -117,9 +125,9 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
                 "avg_margin": float,  # 平均毛利率
             },
             "stability": {
-                "base_score": float,      # CV基础分（0-3）
+                "base_score": float,      # CV基础分（0-2.5）
                 "trend_adjustment": float,# 趋势调整值
-                "final_score": float,     # 稳定性最终分（0-3）
+                "final_score": float,     # 稳定性最终分（0-2.5）
                 "cv": float,              # 变异系数（百分比）
                 "std": float,             # 标准差
                 "trend": dict,            # 趋势分析结果
@@ -128,6 +136,9 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
             "values": list,           # 原始值
         }
     """
+    # 只取最近5年数据
+    gross_margin_values = gross_margin_values[-5:] if len(gross_margin_values) > 5 else gross_margin_values
+
     if len(gross_margin_values) < 5:
         return {
             "absolute": {
@@ -156,7 +167,7 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
     stability_base = calculate_gross_margin_stability_base_score(cv)
     trend = calculate_gross_margin_trend(gross_margin_values)
 
-    # 趋势调整
+    # 趋势调整：温和 +/-0.5，明显 +/-1.0
     trend_adj = 0.0
     if trend["trend_direction"] == "明显上升":
         trend_adj = 1.0
@@ -167,7 +178,7 @@ def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, An
     elif trend["trend_direction"] == "明显下降":
         trend_adj = -1.0
 
-    stability_final = round(max(0.0, min(3.0, stability_base + trend_adj)) * 2) / 2
+    stability_final = round(max(0.0, min(2.5, stability_base + trend_adj)) * 2) / 2
 
     total_score = round(absolute_score + stability_final, 1)
 

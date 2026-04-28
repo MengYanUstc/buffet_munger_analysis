@@ -2,7 +2,7 @@
 import re
 import os
 
-reports_dir = 'reports'
+reports_dir = 'reports/latest'
 high_score_stocks = []
 
 for fname in os.listdir(reports_dir):

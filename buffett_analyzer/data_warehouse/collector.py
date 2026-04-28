@@ -203,10 +203,12 @@ class DataCollector:
         import datetime
         result = {"daily": None, "weekly": None, "sources": {}}
 
-        # 日K：近5年，超过1天未更新则增量拉取
+        # 日K动态判断：收盘后(16:00+)要求数据必须到当天，收盘前允许到昨天
+        now = datetime.datetime.now()
+        daily_max_age = 1 if now.hour >= 16 else 2
         daily_result = self._collect_price_incremental(
             stock_code, "stock_daily_prices", "daily",
-            self.price_fetcher.fetch_daily, min_records=1000, max_age_days=1,
+            self.price_fetcher.fetch_daily, min_records=1000, max_age_days=daily_max_age,
             fetch_full_kwargs={"years": 5},
         )
         result["daily"] = daily_result["df"]
@@ -495,7 +497,37 @@ class DataCollector:
             return
 
         try:
-            prompt = f"{stock_code}分析"
+            # 构建包含5年关键财务数据的丰富prompt
+            stock_name = self._get_stock_name(stock_code) or stock_code
+            df_fin = self.cache.read_financial_reports(stock_code)
+            
+            prompt_parts = [f"{stock_name}({stock_code})分析"]
+            
+            if not df_fin.empty:
+                # 取最近5年，按日期排序
+                df_fin = df_fin.sort_values("report_date").tail(5)
+                prompt_parts.append("\n近5年核心财务数据：\n")
+                
+                # 构建表格行
+                headers = ["指标"] + [str(d)[:4] for d in df_fin["report_date"].tolist()]
+                prompt_parts.append("| " + " | ".join(headers) + " |")
+                prompt_parts.append("|" + "|".join(["------"] * len(headers)) + "|")
+                
+                # 各指标行（单位统一转换）
+                def fmt_row(label, col, unit_fn):
+                    vals = df_fin[col].tolist()
+                    cells = [label] + [unit_fn(v) for v in vals]
+                    return "| " + " | ".join(cells) + " |"
+                
+                prompt_parts.append(fmt_row("ROE(%)", "roe", lambda v: f"{v:.2f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("ROIC(%)", "roic", lambda v: f"{v:.2f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("营收(亿元)", "revenue", lambda v: f"{v/1e4:.1f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("净利润(亿元)", "net_profit", lambda v: f"{v/1e4:.1f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("毛利率(%)", "gross_margin", lambda v: f"{v:.2f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("自由现金流(亿元)", "fcf", lambda v: f"{v/1e4:.1f}" if v is not None else "-"))
+                prompt_parts.append(fmt_row("资本开支(亿元)", "capex", lambda v: f"{v/1e4:.1f}" if v is not None else "-"))
+            
+            prompt = "\n".join(prompt_parts)
             print(f"[DataCollector] 统一调用 Coze Agent: {stock_code}")
             result = client.call(prompt, timeout=600)
             

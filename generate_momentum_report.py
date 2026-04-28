@@ -12,6 +12,7 @@
 输出: reports/momentum_report_YYYYMMDD.md
 """
 
+import os
 import sys
 from datetime import datetime
 
@@ -20,23 +21,25 @@ sys.path.insert(0, '.')
 from buffett_analyzer.index_trading.momentum_report import generate_momentum_report, scan_high_score_stocks
 from buffett_analyzer.data_warehouse.collector import DataCollector
 from buffett_analyzer.index_trading.index_collector import IndexCollector
+from buffett_analyzer.utils.report_archiver import archive_momentum_report, LATEST_DIR
 
 
 def main():
     today = datetime.now().strftime("%Y%m%d")
-    output_path = f"reports/momentum_report_{today}.md"
+    output_path = os.path.join(LATEST_DIR, f"momentum_report_{today}.md")
     db_path = "data/stock_cache.db"
 
     # ========== 1. 数据刷新 ==========
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 更新指数数据...")
+    # 注意：Baostock 是全局单会话，IndexCollector 和 DataCollector 共用
+    # 必须先完成所有数据拉取，最后再统一 logout，否则中途 logout 会中断后续请求
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 更新数据...")
     idx_collector = IndexCollector(db_path)
+    collector = DataCollector(db_path)
+
+    # 指数
     for code, name in [("sh.000300", "沪深300"), ("sz.399006", "创业板指")]:
         result = idx_collector.collect_single(code, period="daily", years=5)
         print(f"  {name}: {result['source']} ({result['rows']} 条)")
-    idx_collector.logout()
-
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 更新股票数据...")
-    collector = DataCollector(db_path)
 
     # 自选股票
     watchlist = [
@@ -48,25 +51,28 @@ def main():
         ("002142", "宁波银行"),
         ("002415", "海康威视"),
         ("000333", "美的集团"),
+        ("600298", "安琪酵母"),
     ]
     for code, name in watchlist:
         result = collector.collect_prices(code)
         print(f"  {name}({code}): daily={result['sources'].get('daily', 'skip')}")
 
     # 高分股票
-    high_score_stocks = scan_high_score_stocks(reports_dir="reports", min_score=70.0)
+    high_score_stocks = scan_high_score_stocks(reports_dir=LATEST_DIR, min_score=70.0)
     for s in high_score_stocks:
-        # 避免重复更新已在 watchlist 中的股票
         if s["code"] in [c for c, _ in watchlist]:
             continue
         result = collector.collect_prices(s["code"])
         print(f"  {s['name']}({s['code']}): daily={result['sources'].get('daily', 'skip')}")
 
+    # 所有数据拉完后再 logout（Baostock 全局会话）
+    idx_collector.logout()
     collector.close()
 
-    # ========== 2. 生成报告 ==========
+    # ========== 2. 归档旧动量报告并生成新报告 ==========
+    archive_momentum_report()
     print(f"[{datetime.now().strftime('%H:%M:%S')}] 开始生成动量报告...")
-    report = generate_momentum_report(db_path=db_path)
+    report = generate_momentum_report(db_path=db_path, reports_dir=LATEST_DIR)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(report)

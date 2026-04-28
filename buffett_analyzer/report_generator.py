@@ -55,9 +55,31 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _run_analyzers(self) -> Dict[str, Any]:
-        """运行全部 5 个分析模块并收集结果。"""
+        """运行全部 5 个分析模块并收集结果。
+        
+        注意：先运行 business_model 模块，获取 LLM 判断的 industry_classification
+        （light/medium/heavy），然后传递给其他模块（尤其是 quality 的资产负债率评分）。
+        """
         result = {}
-        for module_id in ["quality", "management", "moat", "business_model", "valuation"]:
+        
+        # 1. 先运行 business_model 获取行业分类
+        bm_analyzer = AnalyzerRegistry.build(
+            "business_model",
+            stock_code=self.stock_code,
+            industry_type=self.industry_type,
+            source=self.source,
+        )
+        bm_report = bm_analyzer.run()
+        result["business_model"] = bm_report.to_dict()
+        
+        # 提取 LLM 判断的行业分类（light/medium/heavy），覆盖默认的 general
+        detected_industry = bm_report.raw_data.get("extra_info", {}).get("industry_classification", self.industry_type)
+        if detected_industry and detected_industry != self.industry_type:
+            print(f"[ReportGenerator] 行业类型修正: {self.industry_type} -> {detected_industry} (来自 business_model LLM)")
+            self.industry_type = detected_industry
+        
+        # 2. 运行其他模块（使用修正后的行业类型）
+        for module_id in ["quality", "management", "moat", "valuation"]:
             analyzer = AnalyzerRegistry.build(
                 module_id,
                 stock_code=self.stock_code,
@@ -66,6 +88,7 @@ class ReportGenerator:
             )
             report = analyzer.run()
             result[module_id] = report.to_dict()
+        
         return result
 
     def _load_supplemental_data(self):
@@ -554,6 +577,18 @@ class ReportGenerator:
             "### 护城河可持续性（⚠️ 定性判断）",
             f"- 可持续性等级：{'极高' if ms.get('score', 0) >= 6 else '高' if ms.get('score', 0) >= 4.5 else '中等' if ms.get('score', 0) >= 3 else '低'}",
             f"- 护城河趋势对比：{'加强' if ms.get('score', 0) >= mt.get('score', 0) else '稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '削弱'}",
+        ]
+        
+        # 展示结构化字段（如果 LLM 返回了）
+        if "history_duration_years" in ms:
+            lines.extend([
+                f"- 历史时长：{ms.get('history_duration_years', '-')}年",
+                f"- 周期考验：{ms.get('cycle_tests_count', '-')}轮",
+                f"- 突破难度：{ms.get('breakthrough_difficulty', '-')}",
+                f"- 趋势判断：{ms.get('trend_judgment', '-')}",
+            ])
+        
+        lines.extend([
             f"- 可持续性分析：{ms.get('reason', '数据暂缺')}",
             f"- **最终得分：{ms.get('score', 0)}/7**",
             "",
@@ -570,16 +605,16 @@ class ReportGenerator:
             "### 毛利率绝对值评分（✅ 完全定量）",
             f"- 近5年平均毛利率：{self._safe(gm_abs.get('avg_margin'), '{}%', '数据暂缺')}",
             f"- 毛利率绝对值分析：{gm_abs.get('reason', '数据暂缺')}",
-            f"- **最终得分：{gm_abs.get('score', 0)}/2**",
+            f"- **最终得分：{gm_abs.get('score', 0)}/2.5**",
             "",
             "### 毛利率稳定性评分（✅ 完全定量）",
             f"- 毛利率变异系数（CV）：{self._safe(gm_stab.get('cv'), '{}%', '数据暂缺')}",
             f"- 稳定性级别：{'极稳定' if gm_stab.get('score', 0) >= 2.5 else '高度稳定' if gm_stab.get('score', 0) >= 2 else '较稳定' if gm_stab.get('score', 0) >= 1 else '一般'}",
             f"- 趋势方向：{gm_stab.get('trend_direction', '数据暂缺')}",
-            f"- 基础分（由变异系数决定）：{gm_stab.get('base_score', 0)}/3",
+            f"- 基础分（由变异系数决定）：{gm_stab.get('base_score', 0)}/2.5",
             f"- 趋势调整：{gm_stab.get('trend_adjustment', 0):+.1f}",
             f"- 毛利率稳定性分析：{gm_stab.get('reason', '数据暂缺')}",
-            f"- **最终得分：{gm_stab.get('score', 0)}/3**",
+            f"- **最终得分：{gm_stab.get('score', 0)}/2.5**",
             "",
             f"**护城河总分：{moat.get('total_score', 0)}/30分**",
             "",
@@ -588,7 +623,7 @@ class ReportGenerator:
             f"{'护城河深厚，竞争优势明显' if moat.get('total_score', 0) >= 21 else '护城河中等，具备一定竞争优势' if moat.get('total_score', 0) >= 15 else '护城河偏弱，竞争优势有限'}，"
             f"{'行业地位稳固' if iq.get('score', 0) >= 3.5 else '行业竞争激烈'}，"
             f"{'定价能力较强' if pp.get('score', 0) >= 4 else '定价能力一般'}。",
-        ]
+        ])
         return "\n".join(lines)
 
     def _render_business_model(self, ctx: Dict[str, Any]) -> str:
@@ -765,7 +800,7 @@ class ReportGenerator:
             lines.append("  - 永续增长率：数据暂缺")
 
         ev = dcf.get("enterprise_value")
-        mc = dcf.get("market_cap_approx")
+        mc = dcf.get("market_cap")
         if ev and mc:
             ev_yi = round(ev / 1e4, 2)
             mc_yi = round(mc / 1e4, 2)
@@ -888,14 +923,20 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _save_report(self, markdown: str, company_name: str) -> str:
-        """保存报告到 reports/ 目录，返回文件路径。
+        """保存报告到 reports/latest/ 目录，返回文件路径。
         ID 为自增5位数字（00001, 00002...），持久化存储在 reports/.counter 中。
+        生成前会自动将同公司的旧报告从 latest/ 移到 historical/。
         """
+        from .utils.report_archiver import archive_analysis_report, LATEST_DIR
+        # 1. 归档同公司旧报告
+        archive_analysis_report(self.stock_code)
+
+        # 2. 自增ID（计数器仍在 reports/ 根目录）
         reports_dir = os.path.join(os.getcwd(), "reports")
         os.makedirs(reports_dir, exist_ok=True)
+        os.makedirs(LATEST_DIR, exist_ok=True)
 
         today = datetime.date.today().strftime("%Y%m%d")
-        # 自增ID
         counter_path = os.path.join(reports_dir, ".counter")
         current_id = 1
         if os.path.exists(counter_path):
@@ -907,10 +948,10 @@ class ReportGenerator:
         with open(counter_path, "w", encoding="utf-8") as f:
             f.write(str(current_id))
 
-        # 清理公司简称中的特殊字符
+        # 3. 保存到 latest/
         safe_name = re.sub(r'[\\/:*?"<>|]', '', company_name)
         filename = f"{current_id:05d}_{self.stock_code}_{safe_name}_{today}.md"
-        filepath = os.path.join(reports_dir, filename)
+        filepath = os.path.join(LATEST_DIR, filename)
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(markdown)
