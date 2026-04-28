@@ -1,11 +1,5 @@
 """
-管理层分析评分插件
+管理层分析评分插件（当前通过 Coze 统一调用，无本地插件）
 """
 
-from .capital_allocation_plugin import CapitalAllocationPlugin
-from .integrity_plugin import IntegrityPlugin
-
-__all__ = [
-    "CapitalAllocationPlugin",
-    "IntegrityPlugin",
-]
+__all__ = []

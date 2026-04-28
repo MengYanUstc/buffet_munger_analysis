@@ -1,7 +1,7 @@
 """
 股价数据获取器
-A股优先使用 baostock（稳定、不受代理影响），失败时回退到 akshare。
-港股优先使用 tushare（前复权、数据一致），失败时回退到 akshare。
+A股: baostock -> akshare（混合源）
+港股: tushare -> akshare
 返回标准化 DataFrame，列统一为：
   stock_code, trade_date, open, high, low, close,
   volume, amount, amplitude, change_pct, turnover
@@ -85,17 +85,20 @@ class PriceFetcher:
         start_date: datetime.date,
         end_date: datetime.date,
     ) -> pd.DataFrame:
-        """内部统一拉取逻辑。A股只用 baostock（含PE/PB/PS），港股用 tushare -> akshare。"""
+        """内部统一拉取逻辑。A股: baostock -> akshare；港股: tushare -> akshare。"""
         is_hk = is_hk_stock(stock_code)
 
         if not is_hk:
-            # A股：只用 baostock（日K自带PE/PB/PS，避免与akshare字段不一致导致重复拉取）
+            # A股：baostock -> akshare
             df = self._fetch_baostock(stock_code, period, start_date, end_date)
             if not df.empty:
                 self.last_source = "baostock"
                 return df
-            print(f"[PriceFetcher] baostock 获取 {stock_code} {period}K 失败，A股不再回退 akshare")
-            return pd.DataFrame()
+            print(f"[PriceFetcher] baostock 获取 {stock_code} {period}K 失败，回退 akshare")
+            df = self._fetch_akshare(stock_code, period, start_date, end_date)
+            if not df.empty:
+                self.last_source = "akshare"
+                return df
         else:
             # 港股：tushare -> akshare
             df = self._fetch_tushare(stock_code, period, start_date, end_date)
@@ -199,13 +202,13 @@ class PriceFetcher:
         return df[available].copy()
 
     # ------------------------------------------------------------------
-    # tushare (港股 + A股备用)
+    # tushare (港股)
     # ------------------------------------------------------------------
     def _fetch_tushare(
         self, stock_code: str, period: str,
         start_date: datetime.date, end_date: datetime.date
     ) -> pd.DataFrame:
-        """使用 tushare 拉取 K线。"""
+        """使用 tushare 拉取港股 K线。"""
         return self.ts_fetcher._fetch(stock_code, period, start_date, end_date)
 
     # ------------------------------------------------------------------

@@ -126,6 +126,9 @@ class DataCollector:
                     latest = bs_result.get("latest", {})
                     if latest and latest.get("trade_date"):
                         latest["data_source"] = "baostock"
+                        # 通过 akshare 获取准确总股本（失败则抛异常，报告生成中断）
+                        total_share = self.price_fetcher.ts_fetcher.fetch_total_share(stock_code)
+                        latest["total_share"] = total_share
                         self.cache.write_valuation(stock_code, latest)
                         self.cache.update_meta(stock_code, "valuation_metrics", len(bs_result.get("valuation_df", pd.DataFrame())))
                         result["valuation"] = latest
@@ -138,6 +141,9 @@ class DataCollector:
                     else:
                         result["valuation"] = {}
                         result["sources"]["valuation"] = "failed"
+                except RuntimeError:
+                    # 总股本获取失败，必须中断报告生成
+                    raise
                 except Exception as e:
                     print(f"[DataCollector] 估值数据获取失败 ({stock_code}): {e}")
                     result["valuation"] = {}

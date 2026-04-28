@@ -9,11 +9,11 @@
 | 维度 | 满分 | 计算方式 | 数据来源 |
 |------|------|----------|----------|
 | ROE | 4分 | 脚本计算 | 近5年平均 ROE |
-| ROE稳定性 | 2分 | 脚本输出建议分 + AI定性判断 | 近5年 ROE 波动与趋势 |
+| ROE稳定性 | 2分 | 脚本计算 | 近5年 ROE 波动与趋势 |
 | ROIC | 6分 | 脚本计算 | 近5年平均 ROIC |
 | 营收增长 | 3分 | 脚本计算 | 近5年营业总收入 CAGR |
 | 利润增长 | 3分 | 脚本计算 | 近5年扣非净利润 CAGR（优先）/ 归母净利润 |
-| 资产负债率 | 2分 | 脚本输出建议分 + AI定性判断 | 最新年度资产负债率 |
+| 资产负债率 | 2分 | 脚本计算 | 最新年度资产负债率 |
 
 **全局规则**：
 - 最小步长：0.5 分
@@ -98,18 +98,14 @@ README.md                            # 说明文档
     "roe_std": 1.8,
     "stability_level": "高度稳定",
     "trend_direction": "基本稳定",
-    "suggested_base_score": 2.0,
-    "ai_adjustment_range": "1.0 - 2.0 分"
+    "score": 2.0
   },
   "roic": { ... },
   "revenue_growth": { ... },
   "profit_growth": { ... },
   "debt_ratio": { ... },
   "scoring_summary": {
-    "script_calculated_score": 16.0,
-    "ai_qualitative_pending": 4.0,
-    "current_total": 16.0,
-    "max_possible_total": 20.0,
+    "total_score": 18.0,
     "full_score": 20.0
   }
 }

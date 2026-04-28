@@ -1,6 +1,6 @@
 """
 护城河分析主模块（Module 3）
-总分 30 分 = 毛利率稳定性(4分, 代码定量) + 定性分析(26分, Coze LLM)
+总分 30 分 = 毛利率绝对值(2分, 代码定量) + 毛利率稳定性(3分, 代码定量) + 定性分析(25分, Coze LLM)
 """
 
 import json
@@ -9,7 +9,6 @@ from typing import Dict, Any, List
 
 from ..core import AnalyzerBase, AnalysisReport
 from .gross_margin_scorer import compute_gross_margin_score
-from ..quality_scoring.coze_client import CozeLLMClient
 from ..data_warehouse.collector import DataCollector
 
 
@@ -29,43 +28,65 @@ class MoatAnalyzer(AnalyzerBase):
         # 1. 从数据库读取毛利率数据（定量基础）
         gm_data = self._fetch_gross_margin_data()
 
-        # 2. 代码计算毛利率稳定性评分（4分）
+        # 2. 代码计算毛利率评分（5分 = 绝对值2分 + 稳定性3分）
         gm_result = compute_gross_margin_score(gm_data.get("values", []))
 
-        # 3. 从统一缓存读取护城河定性分析（26分）
+        # 3. 从统一缓存读取护城河定性分析（25分）
         llm_result = self._get_qualitative_result(gm_result)
 
         # 4. 汇总
         dimensions = {}
 
-        # 毛利率稳定性维度
-        if gm_result.get("final_score") is not None:
-            dimensions["gross_margin_stability"] = {
-                "score": gm_result["final_score"],
-                "max_score": 4.0,
-                "base_score": gm_result["base_score"],
-                "trend_adjustment": gm_result["trend_adjustment"],
-                "std": gm_result["std"],
-                "values": gm_result["values"],
-                "trend_direction": gm_result["trend"].get("trend_direction"),
-                "trend_diff": gm_result["trend"].get("trend_diff"),
+        # 毛利率绝对值维度（2分）
+        gm_abs = gm_result.get("absolute", {})
+        if gm_abs.get("score") is not None:
+            dimensions["gross_margin_absolute"] = {
+                "score": gm_abs["score"],
+                "max_score": 2.0,
+                "avg_margin": gm_abs["avg_margin"],
                 "reason": (
-                    f"近5年毛利率标准差 {gm_result['std']}%，"
-                    f"趋势为'{gm_result['trend'].get('trend_direction')}'，"
-                    f"基础分 {gm_result['base_score']} + 趋势调整 {gm_result['trend_adjustment']} = "
-                    f"最终分 {gm_result['final_score']}/4.0"
+                    f"近5年平均毛利率 {gm_abs['avg_margin']}%，"
+                    f"对应绝对值得分 {gm_abs['score']}/2.0"
+                ),
+            }
+        else:
+            dimensions["gross_margin_absolute"] = {
+                "score": 0.0,
+                "max_score": 2.0,
+                "reason": "毛利率数据不足，无法评分",
+            }
+
+        # 毛利率稳定性维度（3分）
+        gm_stab = gm_result.get("stability", {})
+        if gm_stab.get("final_score") is not None:
+            dimensions["gross_margin_stability"] = {
+                "score": gm_stab["final_score"],
+                "max_score": 3.0,
+                "base_score": gm_stab["base_score"],
+                "trend_adjustment": gm_stab["trend_adjustment"],
+                "cv": gm_stab.get("cv"),
+                "std": gm_stab["std"],
+                "values": gm_result.get("values", []),
+                "trend_direction": gm_stab["trend"].get("trend_direction"),
+                "trend_diff": gm_stab["trend"].get("trend_diff"),
+                "reason": (
+                    f"近5年毛利率变异系数（CV）{gm_stab.get('cv')}%"
+                    f"（标准差{gm_stab['std']}% / 均值{gm_result.get('absolute', {}).get('avg_margin')}%），"
+                    f"趋势为'{gm_stab['trend'].get('trend_direction')}'，"
+                    f"基础分 {gm_stab['base_score']} + 趋势调整 {gm_stab['trend_adjustment']} = "
+                    f"最终分 {gm_stab['final_score']}/3.0"
                 ),
             }
         else:
             dimensions["gross_margin_stability"] = {
                 "score": 0.0,
-                "max_score": 4.0,
+                "max_score": 3.0,
                 "reason": "毛利率数据不足，无法评分",
             }
 
         # LLM 定性维度
         qualitative_dims = [
-            ("industry_quality", "行业质量", 6.0),
+            ("industry_quality", "行业质量", 5.0),
             ("moat_type", "护城河类型", 7.0),
             ("moat_sustainability", "护城河可持续性", 7.0),
             ("pricing_power", "定价权", 6.0),
@@ -83,14 +104,14 @@ class MoatAnalyzer(AnalyzerBase):
             qualitative_total += score
 
         # 总分
-        gm_score = dimensions["gross_margin_stability"]["score"]
-        total_score = round(gm_score + qualitative_total, 1)
+        gm_total = dimensions["gross_margin_absolute"]["score"] + dimensions["gross_margin_stability"]["score"]
+        total_score = round(gm_total + qualitative_total, 1)
         max_score = 30.0
 
         rating = self._rating(total_score)
 
         summary = {
-            "gross_margin_stability_score": gm_score,
+            "gross_margin_score": gm_total,
             "qualitative_score": round(qualitative_total, 1),
             "total_score": total_score,
             "max_score": max_score,
@@ -129,41 +150,25 @@ class MoatAnalyzer(AnalyzerBase):
             return {"values": []}
 
     def _get_qualitative_result(self, gm_result: Dict[str, Any]) -> Dict[str, Any]:
-        """从统一缓存读取护城河定性结果，若缺失则 fallback 到本地调用。"""
-        # 优先从统一缓存读取
+        """从统一缓存读取护城河定性结果，缓存未命中则返回空结果。"""
         cached = self.collector.get_qualitative_result(self.stock_code, "moat")
         if cached is not None:
             return cached
-
-        # fallback：本地调用 Coze（兼容模式）
-        print("[MoatAnalyzer] 缓存未命中，本地调用 Coze LLM...")
-        from ..utils.constants import DEFAULT_COZE_API_TOKEN
-        token = os.getenv("COZE_API_TOKEN")
-        if token:
-            client = CozeLLMClient(api_token=token)
-        else:
-            client = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
-        if not client.is_configured():
-            return self._empty_qualitative_result("Coze API Token 未配置")
-
-        prompt = self.build_qualitative_prompt(self.stock_code, gm_result)
-        try:
-            result = client.call(prompt, timeout=600)
-            result["_raw_text"] = ""
-            return result
-        except Exception as e:
-            print(f"[MoatAnalyzer] Coze LLM 调用失败: {e}")
-            return self._empty_qualitative_result(str(e))
+        print("[MoatAnalyzer] 警告: 护城河定性缓存未命中，跳过")
+        return self._empty_qualitative_result("缓存未命中")
 
     @staticmethod
     def build_qualitative_prompt(stock_code: str, gm_result: Dict[str, Any]) -> str:
         """构建护城河定性分析 Prompt（供外部统一调用）。"""
         gm_text = ""
         if gm_result and gm_result.get("values"):
+            abs_part = gm_result.get("absolute", {})
+            stab_part = gm_result.get("stability", {})
             gm_text = (
                 f"近5年毛利率数据：{gm_result['values']}%，"
-                f"标准差 {gm_result.get('std', 'N/A')}%，"
-                f"趋势：{gm_result['trend'].get('trend_direction', 'N/A')}"
+                f"平均毛利率 {abs_part.get('avg_margin', 'N/A')}%（绝对值得分 {abs_part.get('score', 'N/A')}/2），"
+                f"变异系数（CV）{stab_part.get('cv', 'N/A')}%（稳定性得分 {stab_part.get('final_score', 'N/A')}/3），"
+                f"趋势：{stab_part.get('trend', {}).get('trend_direction', 'N/A')}"
             )
 
         return f"""你是一位资深中国A股投资分析师，擅长巴菲特-芒格式的价值投资框架中的护城河分析。
@@ -176,9 +181,9 @@ class MoatAnalyzer(AnalyzerBase):
 
 ---
 
-## 评分维度（共26分）
+## 评分维度（共25分）
 
-### 1. 行业质量（满分 6 分）
+### 1. 行业质量（满分 5 分）
 评估该公司所在行业的整体质量：
 - 行业集中度（CR3/CR5）
 - 行业成长性（近5年CAGR）
@@ -186,10 +191,10 @@ class MoatAnalyzer(AnalyzerBase):
 - 需求稳定性（周期性 vs 刚需）
 
 锚点：
-- 6分：极高质量行业（如高端白酒、创新药）
-- 4-5分：高质量行业
-- 2-3分：中等质量行业
-- 0-1分：低质量行业（过度竞争、强周期）
+- 5分：极高质量行业（如高端白酒、创新药）
+- 3-4分：高质量行业
+- 1-2分：中等质量行业
+- 0分：低质量行业（过度竞争、强周期）
 
 ### 2. 护城河类型与强度（满分 7 分）
 识别并评估公司护城河的类型和强度：
@@ -250,7 +255,7 @@ class MoatAnalyzer(AnalyzerBase):
   "stock_code": "{stock_code}",
   "industry_quality": {{
     "score": X.X,
-    "max_score": 6.0,
+    "max_score": 5.0,
     "reason": "详细说明，引用具体事实"
   }},
   "moat_type": {{
@@ -269,7 +274,7 @@ class MoatAnalyzer(AnalyzerBase):
     "reason": "详细说明，引用具体事实"
   }},
   "qualitative_total": X.X,
-  "qualitative_max": 26.0,
+  "qualitative_max": 25.0,
   "key_facts": ["事实1", "事实2"],
   "risk_warnings": ["风险1"]
 }}

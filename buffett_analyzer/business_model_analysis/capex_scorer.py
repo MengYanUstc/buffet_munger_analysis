@@ -1,44 +1,44 @@
 """
 资本开支（CapEx）效率评分器
 
-评分规则（总分 4 分）：
+评分规则（总分 2 分）：
 
-1. 基础分（0-4分）：根据平均资本开支/净利润比率
+1. 基础分（0-2分）：根据平均资本开支/净利润比率
    行业类型不同，阈值分布不同：
 
    轻资产（light）：
-   - < 0.20:   4分（资本效率极高）
-   - 0.20~0.40: 3分
-   - 0.40~0.60: 2分
-   - 0.60~0.80: 1分
+   - < 0.20:   2分（资本效率极高）
+   - 0.20~0.40: 1.5分
+   - 0.40~0.60: 1.0分
+   - 0.60~0.80: 0.5分
    - ≥ 0.80:   0分
 
    中等资产（medium）：
-   - < 0.30:   4分
-   - 0.30~0.50: 3分
-   - 0.50~0.70: 2分
-   - 0.70~0.90: 1分
+   - < 0.30:   2分
+   - 0.30~0.50: 1.5分
+   - 0.50~0.70: 1.0分
+   - 0.70~0.90: 0.5分
    - ≥ 0.90:   0分
 
    重资产（heavy）：
-   - < 0.40:   4分
-   - 0.40~0.60: 3分
-   - 0.60~0.80: 2分
-   - 0.80~1.00: 1分
+   - < 0.40:   2分
+   - 0.40~0.60: 1.5分
+   - 0.60~0.80: 1.0分
+   - 0.80~1.00: 0.5分
    - ≥ 1.00:   0分
 
-2. 稳定性调整（-1~+1分，0.5步长）：资本开支波动率
-   - CV < 0.15: +1.0分（极稳定，规划性强）
-   - CV < 0.35: +0.5分（相对稳定）
+2. 稳定性调整（-0.5~+0.5分，0.25步长）：资本开支波动率
+   - CV < 0.15: +0.5分（极稳定，规划性强）
+   - CV < 0.35: +0.25分（相对稳定）
    - CV < 0.55: 0分（正常波动）
-   - CV < 0.75: -0.5分（波动较大）
-   - CV ≥ 0.75: -1.0分（波动极大，规划性弱）
+   - CV < 0.75: -0.25分（波动较大）
+   - CV ≥ 0.75: -0.5分（波动极大，规划性弱）
 
 3. 阶段找补
-   - startup / growth（初创/成长期）：+0.5 分
+   - startup / growth（初创/成长期）：+0.25 分
    - mature / decline（成熟/衰退期）：0 分
 
-最终分 = max(0.0, min(4.0, 基础分 + 稳定性调整 + 行业找补 + 阶段找补))
+最终分 = max(0.0, min(2.0, 基础分 + 稳定性调整 + 行业找补 + 阶段找补))
 """
 
 from typing import List, Dict, Any
@@ -59,7 +59,7 @@ def compute_capex_score(
     phase_type: str = "mature",
 ) -> Dict[str, Any]:
     """
-    计算资本开支效率评分（总分 4 分）。
+    计算资本开支效率评分（总分 2 分）。
 
     Args:
         capex_values: 各年度资本开支（亿元/万元，与净利润单位一致）
@@ -76,10 +76,16 @@ def compute_capex_score(
     profits = net_profit_values[:n]
 
     # 1. 计算每年资本开支比率
+    # 防护：净利润 <= 0、NaN、Inf 时该年记录跳过，比率无意义
+    import math
     yearly_details = []
     yearly_ratios = []
     for i, (c, p) in enumerate(zip(capex, profits)):
-        ratio = c / p if p != 0 else 999.0
+        if not (math.isfinite(c) and math.isfinite(p)):
+            continue
+        if p <= 0:
+            continue
+        ratio = c / p
         yearly_ratios.append(ratio)
         yearly_details.append({
             "year_index": i,
@@ -88,27 +94,30 @@ def compute_capex_score(
             "ratio": round(ratio, 3),
         })
 
+    if not yearly_ratios:
+        return {"final_score": None, "reason": "净利润均 <= 0 或数据异常，资本开支比率无意义"}
+
     avg_ratio = statistics.mean(yearly_ratios) if yearly_ratios else 0.0
     cv_value = _cv(capex)
 
-    # 2. 基础分（0-4分），按行业类型区分阈值
+    # 2. 基础分（0-2分），按行业类型区分阈值
     base_score = _base_score_by_ratio(avg_ratio, industry_type)
 
-    # 3. 稳定性调整（-1~+1分，0.5步长）
+    # 3. 稳定性调整（-0.5~+0.5分，0.25步长）
     stability_adj = _stability_adjustment(cv_value)
 
     # 4. 阶段找补
-    phase_bonus = 0.5 if phase_type in ("startup", "growth") else 0.0
+    phase_bonus = 0.25 if phase_type in ("startup", "growth") else 0.0
 
-    # 5. 最终分数（严格限制在 [0, 4]）
+    # 5. 最终分数（严格限制在 [0, 2]）
     raw_score = base_score + stability_adj + phase_bonus
-    final_score = max(0.0, min(4.0, raw_score))
+    final_score = max(0.0, min(2.0, raw_score))
 
     reason = (
         f"平均资本开支/净利润比率={avg_ratio:.2f}（行业类型={industry_type}），基础分={base_score}分；"
-        f"资本开支波动率(CV)={cv_value:.2f}，稳定性调整={stability_adj:+.1f}分；"
-        f"阶段找补={phase_bonus:+.1f}分；"
-        f"最终得分={final_score:.1f}分（上限4分）"
+        f"资本开支波动率(CV)={cv_value:.2f}，稳定性调整={stability_adj:+.2f}分；"
+        f"阶段找补={phase_bonus:+.2f}分；"
+        f"最终得分={final_score:.1f}分（上限2分）"
     )
 
     return {
@@ -127,45 +136,50 @@ def compute_capex_score(
 
 
 def _base_score_by_ratio(ratio: float, industry_type: str = "medium") -> float:
-    """根据平均资本开支比率和行业类型计算基础分（0-4分）。"""
+    """根据平均资本开支比率和行业类型计算基础分（0-2分）。"""
     thresholds = _INDUSTRY_THRESHOLDS.get(industry_type, _INDUSTRY_THRESHOLDS["medium"])
     t1, t2, t3, t4 = thresholds
 
     if ratio < t1:
-        return 4.0
-    elif ratio < t2:
-        return 3.0
-    elif ratio < t3:
         return 2.0
-    elif ratio < t4:
+    elif ratio < t2:
+        return 1.5
+    elif ratio < t3:
         return 1.0
+    elif ratio < t4:
+        return 0.5
     else:
         return 0.0
 
 
 def _stability_adjustment(cv: float) -> float:
     """
-    稳定性调整（-1~+1分，0.5步长）：
+    稳定性调整（-0.5~+0.5分，0.25步长）：
     资本开支波动率越低越优秀，波动越大越扣分。
     """
     if cv < 0.15:
-        return 1.0
-    elif cv < 0.35:
         return 0.5
+    elif cv < 0.35:
+        return 0.25
     elif cv < 0.55:
         return 0.0
     elif cv < 0.75:
-        return -0.5
+        return -0.25
     else:
-        return -1.0
+        return -0.5
 
 
 def _cv(values: List[float]) -> float:
     """计算变异系数（标准差/均值绝对值）。"""
+    import math
     if len(values) < 2:
         return 0.0
-    mean = statistics.mean(values)
+    # 过滤非有限值，防止 statistics 模块崩溃
+    clean = [v for v in values if math.isfinite(v)]
+    if len(clean) < 2:
+        return 0.0
+    mean = statistics.mean(clean)
     if mean == 0:
         return 0.0
-    std = statistics.stdev(values)
+    std = statistics.stdev(clean)
     return abs(std / mean)

@@ -33,11 +33,13 @@ class ManagementAnalyzer(AnalyzerBase):
 
         # 3. 解析维度得分
         cap = llm_result.get("capital_allocation", {})
+        focus = llm_result.get("business_focus", {})
         integrity = llm_result.get("management_integrity", {})
 
         cap_score = float(cap.get("score", 0.0))
+        focus_score = float(focus.get("score", 0.0))
         int_score = float(integrity.get("score", 0.0))
-        total_score = round(cap_score + int_score, 2)
+        total_score = round(cap_score + focus_score + int_score, 2)
         rating = self._rating(total_score)
 
         # 4. 风险提示（合并 LLM 返回和代码生成）
@@ -46,12 +48,19 @@ class ManagementAnalyzer(AnalyzerBase):
             risks.append("管理层诚信评分极低，存在重大治理或违规风险")
         if cap_score <= 2.0:
             risks.append("资本配置能力评分极低，可能存在资本浪费或并购失败")
+        if focus_score <= 0.5:
+            risks.append("管理层业务专注度评分极低，存在主业不清或过度多元化风险")
 
         dimensions = {
             "capital_allocation": {
                 "score": cap_score,
-                "max_score": 6.0,
+                "max_score": 4.0,
                 "reason": cap.get("reason", "数据暂缺"),
+            },
+            "business_focus": {
+                "score": focus_score,
+                "max_score": 2.0,
+                "reason": focus.get("reason", "数据暂缺"),
             },
             "management_integrity": {
                 "score": int_score,
@@ -62,6 +71,7 @@ class ManagementAnalyzer(AnalyzerBase):
 
         summary = {
             "capital_allocation_score": cap_score,
+            "business_focus_score": focus_score,
             "management_integrity_score": int_score,
             "total_score": total_score,
             "max_score": 10.0,
@@ -88,32 +98,12 @@ class ManagementAnalyzer(AnalyzerBase):
         )
 
     def _get_qualitative_result(self) -> Dict[str, Any]:
-        """从统一缓存读取管理层定性结果，若缺失则 fallback 到本地调用。"""
+        """从统一缓存读取管理层定性结果，缓存未命中则返回空结果。"""
         cached = self.collector.get_qualitative_result(self.stock_code, "management")
         if cached is not None:
             return cached
-
-        # fallback：本地调用 Coze（兼容模式）
-        print("[ManagementAnalyzer] 缓存未命中，本地调用 Coze LLM...")
-        import os
-        from ..quality_scoring.coze_client import CozeLLMClient
-        from ..utils.constants import DEFAULT_COZE_API_TOKEN
-        token = os.getenv("COZE_API_TOKEN")
-        if token:
-            client = CozeLLMClient(api_token=token)
-        else:
-            client = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
-        if not client.is_configured():
-            return self._empty_result("Coze API Token 未配置")
-
-        prompt = self.build_qualitative_prompt(self.stock_code)
-        try:
-            result = client.call(prompt, timeout=600)
-            result["_raw_text"] = ""
-            return result
-        except Exception as e:
-            print(f"[ManagementAnalyzer] Coze LLM 调用失败: {e}")
-            return self._empty_result(str(e))
+        print("[ManagementAnalyzer] 警告: 管理层定性缓存未命中，跳过")
+        return self._empty_result("缓存未命中")
 
     def _fetch_roic_trend(self) -> Dict[str, Any]:
         """从数据库读取近5年ROIC数据并计算趋势。"""
@@ -177,7 +167,7 @@ class ManagementAnalyzer(AnalyzerBase):
 
 ## 评分维度（共10分）
 
-### 1. 资本配置能力（满分 6 分）
+### 1. 资本配置能力（满分 4 分）
 
 评估管理层如何运用公司资本：
 - **ROIC表现**：近5年ROIC趋势是上升、平稳还是下降？资本使用效率是否稳定？
@@ -187,12 +177,27 @@ class ManagementAnalyzer(AnalyzerBase):
 - **再投资决策**：留存收益是否创造了更高的ROIC？
 
 锚点：
-- 6分：ROIC稳定或上升、分红稳定合理、无重大并购失败、无股权质押风险
-- 4-5分：ROIC温和下降、分红不稳定或比例偏低、有小额质押
-- 2-3分：ROIC明显下滑、长期不分红、并购失败或高质押
-- 0-1分：ROIC严重下滑、资本配置能力极差
+- 4分：ROIC稳定或上升、分红稳定合理、无重大并购失败、无股权质押风险
+- 2.5-3分：ROIC温和下降、分红不稳定或比例偏低、有小额质押
+- 1-1.5分：ROIC明显下滑、长期不分红、并购失败或高质押
+- 0分：ROIC严重下滑、资本配置能力极差
 
-### 2. 管理层诚信（满分 4 分）
+### 2. 管理层业务专注度（满分 2 分）
+
+评估管理层是否专注于核心业务：
+- **主业聚焦程度**：公司收入是否主要来自于核心业务？非主业收入占比多少？
+- **多元化程度**：是否存在过度多元化或跨界经营？（如房地产商做新能源汽车、白酒企业做房地产）
+- **历史业务变更**：近10年是否频繁变更主营业务方向？
+- **管理层精力分配**：管理层是否将主要精力投入核心业务？是否存在精力分散的风险？
+
+锚点：
+- 2分：极度专注，长期坚持单一主业（如茅台只做酒、片仔癀只做中药）
+- 1分：基本聚焦主业，但有一定多元化尝试或副业收入
+- 0分：主业不清、频繁跨界、多元化失败或管理精力严重分散
+
+> 核心理念：巴菲特偏好"专注于自己擅长领域"的管理层。过度多元化往往是毁灭价值的开始。
+
+### 3. 管理层诚信（满分 4 分）
 
 评估管理层的诚信度：
 - **违规记录**：是否有财务造假、欺诈发行等重大违规？是否有行政处罚或监管函？
@@ -219,7 +224,12 @@ class ManagementAnalyzer(AnalyzerBase):
   "stock_code": "{stock_code}",
   "capital_allocation": {{
     "score": X.X,
-    "max_score": 6.0,
+    "max_score": 4.0,
+    "reason": "详细说明，引用具体事实"
+  }},
+  "business_focus": {{
+    "score": X.X,
+    "max_score": 2.0,
     "reason": "详细说明，引用具体事实"
   }},
   "management_integrity": {{
@@ -246,6 +256,7 @@ class ManagementAnalyzer(AnalyzerBase):
         """LLM 失败时的空结果。"""
         return {
             "capital_allocation": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "business_focus": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "management_integrity": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "total_score": 0.0,
         }

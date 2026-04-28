@@ -50,23 +50,30 @@ def score_growth(cagr: float) -> float:
 def calculate_cagr(values: List[float]) -> Union[float, None]:
     """
     计算复合年均增长率（CAGR）。
-    如果期初或期末值为非正数，返回 None（避免误导性计算）。
+    如果期初或期末值为非正数、NaN、Inf，返回 None（避免公式崩溃）。
     """
+    import math
     if len(values) < 2:
         return None
     start_val = values[0]
     end_val = values[-1]
+    if not (math.isfinite(start_val) and math.isfinite(end_val)):
+        return None
     if start_val <= 0 or end_val <= 0:
         return None
     years = len(values) - 1
-    cagr = (end_val / start_val) ** (1 / years) - 1
-    return cagr * 100
+    try:
+        cagr = (end_val / start_val) ** (1 / years) - 1
+        return cagr * 100
+    except Exception:
+        return None
 
 
 def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     """
-    ROE稳定性分析（供AI定性判断，满分2分）。
-    输出建议基础分、波动级别、趋势方向等定量信息。
+    ROE稳定性分析（满分2分）。
+    基于变异系数（CV = 标准差 / |均值|）评估ROE相对波动性，
+    相比绝对标准差更能反映不同ROE水平公司的真实稳定性。
     """
     if len(roes) < 4:
         return {
@@ -76,18 +83,20 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
 
     std = float(np.std(roes, ddof=1))
     mean = float(np.mean(roes))
+    # 变异系数（标准差 / 均值绝对值），以小数表示
+    cv = std / abs(mean) if mean != 0 else 0.0
 
-    # 稳定性级别与建议基础分
-    if std <= 3:
+    # 稳定性级别与建议基础分（按CV阈值）
+    if cv <= 0.10:
         stability = "高度稳定"
         base_score = 2.0
-    elif std <= 5:
+    elif cv <= 0.20:
         stability = "比较稳定"
         base_score = 1.5
-    elif std <= 7:
+    elif cv <= 0.30:
         stability = "一般稳定"
         base_score = 1.0
-    elif std <= 9:
+    elif cv <= 0.40:
         stability = "较不稳定"
         base_score = 0.5
     else:
@@ -116,11 +125,9 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     trend_penalty = trend_penalties.get(trend, 0.0)
     penalty_score = round_score(max(0.0, min(2.0, base_score + trend_penalty)), step=0.5)
 
-    lower = round_score(max(0.0, penalty_score - 0.5), step=0.5)
-    upper = round_score(min(2.0, penalty_score + 0.5), step=0.5)
-
     return {
         "roe_values": [round(x, 2) for x in roes],
+        "roe_cv": round(cv * 100, 2),      # 变异系数（百分比形式，如 26.4%）
         "roe_std": round(std, 2),
         "roe_mean": round(mean, 2),
         "roe_min": round(min(roes), 2),
@@ -131,7 +138,6 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
         "suggested_base_score": base_score,
         "trend_penalty": trend_penalty,
         "penalty_score": penalty_score,
-        "ai_adjustment_range": f"{lower:.1f} - {upper:.1f} 分",
         "max_score": 2.0,
         "min_score": 0.0
     }
@@ -142,8 +148,8 @@ from .utils.common import DEBT_RATIO_THRESHOLDS
 
 def analyze_debt_ratio(ratio: float, industry_type: str = "general") -> Dict[str, Any]:
     """
-    资产负债率分析（供AI定性判断，满分2分）。
-    根据不同行业的合理负债区间给出建议基础分。
+    资产负债率分析（完全定量评分，满分2分）。
+    根据不同行业的合理负债区间直接给出最终得分。
     """
     levels = DEBT_RATIO_THRESHOLDS.get(industry_type, DEBT_RATIO_THRESHOLDS["general"])
     base_score = 0.0
@@ -155,15 +161,11 @@ def analyze_debt_ratio(ratio: float, industry_type: str = "general") -> Dict[str
             level_desc = desc
             break
 
-    lower = round_score(max(0.0, base_score - 0.5), step=0.5)
-    upper = round_score(min(2.0, base_score + 0.5), step=0.5)
-
     return {
         "debt_ratio": round(ratio, 2),
         "industry_type": industry_type,
         "debt_level": level_desc,
         "suggested_base_score": base_score,
-        "ai_adjustment_range": f"{lower:.1f} - {upper:.1f} 分",
         "max_score": 2.0,
         "min_score": 0.0
     }

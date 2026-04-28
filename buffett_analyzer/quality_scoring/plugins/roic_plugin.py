@@ -4,7 +4,7 @@ ROIC 评分插件 —— 完全定量
 
 from typing import Dict, Any
 
-from ..plugin_base import ScoringPlugin, ScoringResult, ScoringType
+from ..plugin_base import ScoringPlugin, ScoringResult
 from ...scorer import score_roic
 
 
@@ -12,7 +12,6 @@ class RoicPlugin(ScoringPlugin):
     dimension_id = "roic"
     name = "ROIC"
     max_score = 6.0
-    score_type = ScoringType.QUANTITATIVE_ONLY
     step = 0.5
 
     def compute(self, context: Dict[str, Any]) -> ScoringResult:
@@ -23,9 +22,5 @@ class RoicPlugin(ScoringPlugin):
             name=self.name,
             score=score,
             max_score=self.max_score,
-            score_type=self.score_type,
             facts={"avg_roic": avg_roic},
         )
-
-    def get_facts(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        return {"avg_roic": context.get("avg_roic")}

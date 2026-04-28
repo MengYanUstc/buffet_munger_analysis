@@ -1,9 +1,8 @@
 """
 Tushare 数据获取封装
-主要服务港股日周K线；A股前复权作为备用方案。
+仅服务港股日周K线（A股已全部迁移到 baostock + akshare）。
 支持双 Token 回退：主 Token 失败时自动切换到备用 Token。
 港股带 30 秒全局节流控制，规避 hk_daily 2次/分钟限频。
-A股前复权策略：pro_bar 优先，失败时自算（daily/weekly + adj_factor）。
 返回标准化 DataFrame，列统一为：
   stock_code, trade_date, open, high, low, close,
   volume, amount, amplitude, change_pct, turnover
@@ -20,7 +19,7 @@ from ...utils import is_hk_stock
 
 
 class TushareFetcher:
-    """Tushare 股价数据获取器。港股优先，A股备用（当前策略下主要服务港股）。支持双 Token 回退。"""
+    """Tushare 股价数据获取器。仅服务港股 K线。支持双 Token 回退。"""
 
     # 类级别：港股 hk_daily 上次调用时间戳，用于全局 30s 节流
     _hk_last_call: float = 0.0
@@ -94,7 +93,8 @@ class TushareFetcher:
             if is_hk_stock(stock_code):
                 df = self._fetch_hk(ts_code, start_str, end_str, period)
             else:
-                df = self._fetch_a_share(ts_code, freq, start_str, end_str)
+                # A股已全部迁移到 baostock + akshare，不再使用 tushare
+                return pd.DataFrame()
         except Exception as e:
             print(f"[TushareFetcher] {stock_code} {period}K 失败: {e}")
             return pd.DataFrame()
@@ -103,83 +103,6 @@ class TushareFetcher:
             return pd.DataFrame()
 
         return self._normalize(df, stock_code)
-
-    # ------------------------------------------------------------------
-    # A股：pro_bar -> 自算前复权 (daily/weekly + adj_factor)
-    # ------------------------------------------------------------------
-    def _fetch_a_share(self, ts_code: str, freq: str, start_str: str, end_str: str) -> Optional[pd.DataFrame]:
-        """获取 A股 K线，pro_bar 优先，失败时自算前复权，支持双 Token 回退。"""
-        # 1) 尝试 pro_bar（主 Token -> 备用 Token）
-        for pro_instance, label in [(self.pro, "main"), (self.pro_fallback, "fallback")]:
-            if pro_instance is None:
-                continue
-            try:
-                df = ts.pro_bar(
-                    ts_code=ts_code, adj="qfq", freq=freq,
-                    start_date=start_str, end_date=end_str,
-                    api=pro_instance,
-                )
-                if df is not None and not df.empty:
-                    return df
-            except Exception as e:
-                print(f"[TushareFetcher] pro_bar ({label}) 失败: {e}")
-
-        # 2) 自算前复权（主 Token -> 备用 Token）
-        for pro_instance, label in [(self.pro, "main"), (self.pro_fallback, "fallback")]:
-            if pro_instance is None:
-                continue
-            df = self._fetch_a_share_qfq(ts_code, freq, start_str, end_str, pro_instance)
-            if df is not None and not df.empty:
-                return df
-
-        return None
-
-    def _fetch_a_share_qfq(
-        self,
-        ts_code: str,
-        freq: str,
-        start_str: str,
-        end_str: str,
-        pro_instance,
-    ) -> Optional[pd.DataFrame]:
-        """用 daily/weekly + adj_factor 自算前复权价格。"""
-        try:
-            # 拉原始 K线
-            if freq == "D":
-                df = pro_instance.daily(ts_code=ts_code, start_date=start_str, end_date=end_str)
-            else:
-                df = pro_instance.weekly(ts_code=ts_code, start_date=start_str, end_date=end_str)
-
-            if df is None or df.empty:
-                return None
-
-            # 拉复权因子
-            adj = pro_instance.adj_factor(ts_code=ts_code, start_date=start_str, end_date=end_str)
-            if adj is None or adj.empty:
-                return None
-
-            # 合并
-            df = df.merge(adj[["trade_date", "adj_factor"]], on="trade_date", how="left")
-            df["adj_factor"] = pd.to_numeric(df["adj_factor"], errors="coerce")
-
-            # 按日期排序；adj_factor 接口返回的数据可能比 daily 多一天
-            # 因此用 adj 全局最新值作为基准，而非 df 最后一行
-            df = df.sort_values("trade_date").reset_index(drop=True)
-            latest_adj = float(adj["adj_factor"].iloc[0])
-
-            # 计算前复权价格
-            for col in ["open", "high", "low", "close"]:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                    df[col] = df[col] * df["adj_factor"] / latest_adj
-
-            # 清理辅助列
-            df = df.drop(columns=["adj_factor"], errors="ignore")
-            return df
-
-        except Exception as e:
-            print(f"[TushareFetcher] 自算前复权失败: {e}")
-            return None
 
     # ------------------------------------------------------------------
     # 港股：hk_daily，支持双 Token 回退
@@ -255,3 +178,51 @@ class TushareFetcher:
         ]
         available = [c for c in keep_cols if c in df.columns]
         return df[available].copy()
+
+    def fetch_total_share(self, stock_code: str) -> float:
+        """
+        获取最新总股本（万股）。A股不再使用 tushare，仅通过 akshare 获取。
+        策略：
+          1. 首选巨潮资讯 stock_profile_cninfo（当前网络环境下更稳定）
+          2. fallback 东方财富 stock_individual_info_em，重试3次
+          3. 全部失败则抛出异常，由上游决定报告生成失败
+        """
+        if is_hk_stock(stock_code):
+            raise ValueError(f"港股 {stock_code} 暂不支持总股本获取")
+
+        import akshare as ak
+
+        # 首选：巨潮资讯 stock_profile_cninfo，3次重试
+        cninfo_last_err = None
+        for attempt in range(3):
+            try:
+                df = ak.stock_profile_cninfo(symbol=stock_code)
+                if df is not None and not df.empty:
+                    total_share = float(df.iloc[0, 13])  # 注册资本列 = 总股本(万股)
+                    print(f"[AkShare] {stock_code} 总股本: {total_share:.0f} 万股 (巨潮资讯)")
+                    return total_share
+            except Exception as e:
+                cninfo_last_err = e
+                print(f"[AkShare] stock_profile_cninfo 第{attempt + 1}次失败: {e}")
+                if attempt < 2:
+                    time.sleep(1 + attempt)
+
+        # Fallback：东方财富 stock_individual_info_em，3次重试
+        last_error = None
+        for attempt in range(3):
+            try:
+                df = ak.stock_individual_info_em(symbol=stock_code)
+                if df is not None and not df.empty and len(df) >= 4:
+                    total_share_shares = float(df.iloc[3]["value"])
+                    total_share = total_share_shares / 10000.0
+                    print(f"[AkShare] {stock_code} 总股本: {total_share:.0f} 万股 (东方财富)")
+                    return total_share
+            except Exception as e:
+                last_error = e
+                print(f"[AkShare] stock_individual_info_em 第{attempt + 1}次失败: {e}")
+                if attempt < 2:
+                    time.sleep(1 + attempt)
+
+        raise RuntimeError(
+            f"无法获取 {stock_code} 的总股本：巨潮资讯失败且东方财富3次重试均失败: {last_error}"
+        )

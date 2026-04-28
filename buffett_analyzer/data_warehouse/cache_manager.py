@@ -123,6 +123,7 @@ class CacheManager:
             """
             SELECT trade_date, close_price, pe_ttm, pb, ps_ttm,
                    pe_percentile_5y, pb_percentile_5y, ps_percentile_5y,
+                   total_share,
                    industry_pe, industry_pb, industry_ps,
                    pe_vs_industry, pb_vs_industry, ps_vs_industry,
                    data_source, note
@@ -146,10 +147,11 @@ class CacheManager:
             INSERT OR REPLACE INTO valuation_metrics
             (stock_code, trade_date, close_price, pe_ttm, pb, ps_ttm,
              pe_percentile_5y, pb_percentile_5y, ps_percentile_5y,
+             total_share,
              industry_pe, industry_pb, industry_ps,
              pe_vs_industry, pb_vs_industry, ps_vs_industry,
              data_source, note, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 stock_code,
@@ -161,6 +163,7 @@ class CacheManager:
                 data.get("pe_percentile_5y"),
                 data.get("pb_percentile_5y"),
                 data.get("ps_percentile_5y"),
+                data.get("total_share"),
                 data.get("industry_pe"),
                 data.get("industry_pb"),
                 data.get("industry_ps"),

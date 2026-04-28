@@ -1,10 +1,8 @@
 """
-质量评分引擎与插件
+质量评分插件
 """
 
-from .engine import AiScoringEngine
-from .llm_client import LLMClient
-from .plugin_base import ScoringPlugin, ScoringResult, ScoringType
+from .plugin_base import ScoringPlugin, ScoringResult
 from .plugins import (
     RoePlugin,
     RoicPlugin,
@@ -28,10 +26,7 @@ def get_default_plugins() -> list:
 
 
 __all__ = [
-    "AiScoringEngine",
-    "LLMClient",
     "ScoringPlugin",
     "ScoringResult",
-    "ScoringType",
     "get_default_plugins",
 ]

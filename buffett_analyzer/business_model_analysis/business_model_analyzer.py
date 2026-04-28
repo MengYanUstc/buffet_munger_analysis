@@ -1,6 +1,7 @@
 """
 商业模式分析主模块（Module 4）
-总分 20 分 = 定性 10 分（Coze LLM）+ 定量 10 分（资本开支 4 分 + 自由现金流 6 分）
+总分 20 分 = 定性 12 分（Coze LLM：收入稳定性 4 + 商业模式质量 4 + 简单易懂 4）
+              + 定量 8 分（资本开支 2 分 + 自由现金流 6 分）
 
 增长确定性（3分）已移至估值模块，由估值模块复用本模块的定性缓存。
 所有定量分析数据严格从 SQLite 读取，不直接走网络 fallback。
@@ -13,7 +14,6 @@ from typing import Dict, Any
 import pandas as pd
 
 from ..core import AnalyzerBase, AnalysisReport
-from ..quality_scoring.coze_client import CozeLLMClient
 from ..data_warehouse.collector import DataCollector
 from .capex_scorer import compute_capex_score
 
@@ -42,7 +42,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         if not development_stage:
             development_stage = llm_result.get("growth_stage", "mature")
 
-        # 3. 从数据库读取并计算资本开支定量评分（4分）
+        # 3. 从数据库读取并计算资本开支定量评分（2分）
         capex_result = self._compute_capex_quantitative(industry_classification, development_stage)
 
         # 4. 从数据库读取并计算自由现金流定量评分（6分）
@@ -54,23 +54,30 @@ class BusinessModelAnalyzer(AnalyzerBase):
         # 定性维度（注意：growth_certainty 已移至估值模块，此处保留在缓存中供估值复用）
         stability = llm_result.get("income_stability", {})
         quality = llm_result.get("business_model_quality", {})
+        # 兼容 LLM 可能返回 business_model_simplicity 或 business_simplicity 两种字段名
+        simplicity = llm_result.get("business_model_simplicity") or llm_result.get("business_simplicity", {})
 
         dimensions["income_stability"] = {
             "score": stability.get("score", 0.0),
-            "max_score": 5.0,
+            "max_score": 4.0,
             "reason": stability.get("reason", ""),
         }
         dimensions["business_model_quality"] = {
             "score": quality.get("score", 0.0),
-            "max_score": 5.0,
+            "max_score": 4.0,
             "reason": quality.get("reason", ""),
         }
+        dimensions["business_model_simplicity"] = {
+            "score": simplicity.get("score", 0.0),
+            "max_score": 4.0,
+            "reason": simplicity.get("reason", ""),
+        }
 
-        # 定量维度：资本开支（满分 4 分）
+        # 定量维度：资本开支（满分 2 分）
         if capex_result.get("final_score") is not None:
             dimensions["capex_efficiency"] = {
                 "score": capex_result["final_score"],
-                "max_score": 4.0,
+                "max_score": 2.0,
                 "base_score": capex_result["base_score"],
                 "stability_adjustment": capex_result["stability_adjustment"],
                 "phase_bonus": capex_result.get("phase_bonus", 0.0),
@@ -84,7 +91,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         else:
             dimensions["capex_efficiency"] = {
                 "score": 0.0,
-                "max_score": 4.0,
+                "max_score": 2.0,
                 "reason": capex_result.get("reason", "资本开支数据不足"),
             }
 
@@ -108,6 +115,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
         qualitative_total = (
             dimensions["income_stability"]["score"]
             + dimensions["business_model_quality"]["score"]
+            + dimensions["business_model_simplicity"]["score"]
         )
         quantitative_total = (
             dimensions["capex_efficiency"]["score"]
@@ -119,9 +127,9 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
         summary = {
             "qualitative_score": round(qualitative_total, 1),
-            "qualitative_max": 10.0,
+            "qualitative_max": 12.0,
             "quantitative_score": quantitative_total,
-            "quantitative_max": 10.0,
+            "quantitative_max": 8.0,
             "total_score": total_score,
             "max_score": 20.0,
             "rating": rating,
@@ -155,35 +163,18 @@ class BusinessModelAnalyzer(AnalyzerBase):
         )
 
     def _get_qualitative_result(self) -> Dict[str, Any]:
-        """从统一缓存读取商业模式定性结果，若缺失则 fallback 到本地调用。"""
+        """从统一缓存读取商业模式定性结果，缓存未命中则返回空结果。"""
         cached = self.collector.get_qualitative_result(self.stock_code, "business_model")
         if cached is not None:
             return cached
-
-        print("[BusinessModelAnalyzer] 缓存未命中，本地调用 Coze LLM...")
-        from ..utils.constants import DEFAULT_COZE_API_TOKEN
-        token = os.getenv("COZE_API_TOKEN")
-        if token:
-            client = CozeLLMClient(api_token=token)
-        else:
-            client = CozeLLMClient(api_token=DEFAULT_COZE_API_TOKEN)
-
-        if not client.is_configured():
-            return self._empty_result("Coze API Token 未配置")
-
-        prompt = self.build_qualitative_prompt(self.stock_code)
-        try:
-            result = client.call(prompt, timeout=600)
-            return result
-        except Exception as e:
-            print(f"[BusinessModelAnalyzer] Coze LLM 调用失败: {e}")
-            return self._empty_result(str(e))
+        print("[BusinessModelAnalyzer] 警告: 商业模式定性缓存未命中，跳过")
+        return self._empty_result("缓存未命中")
 
     def _compute_capex_quantitative(
         self, industry_classification: str, development_stage: str
     ) -> Dict[str, Any]:
         """
-        从数据库读取资本开支数据，计算定量评分（4分）。
+        从数据库读取资本开支数据，计算定量评分（2分）。
         数据流：SQLite → read_financial_reports → compute_capex_score
         """
         try:
@@ -309,9 +300,9 @@ class BusinessModelAnalyzer(AnalyzerBase):
 
 ---
 
-## 第三步：评分（共13分）
+## 第三步：评分（共12分）
 
-### 1. 收入稳定性评估（满分 5 分）
+### 1. 收入稳定性评估（满分 4 分）
 
 评估因素：
 - **客户集中度**：前五大客户占比多少？是否依赖单一客户？
@@ -320,11 +311,11 @@ class BusinessModelAnalyzer(AnalyzerBase):
 - **客户粘性**：B2B合同续约率？B2C复购率/留存率？是否有高转换成本？
 
 锚点：
-- **5分**：客户高度分散、产品多元化、无周期性、高复购率
-- **3分**：客户较集中或产品单一或有一定周期性
+- **4分**：客户高度分散、产品多元化、无周期性、高复购率
+- **2.5分**：客户较集中或产品单一或有一定周期性
 - **1分**：大客户依赖严重、产品单一、强周期性、客户粘性低
 
-### 2. 商业模式质量评估（满分 5 分）
+### 2. 商业模式质量评估（满分 4 分）
 
 评估因素：
 - **赚钱逻辑是否清晰**：如何创造价值？如何获取价值？盈利能力如何（ROE、净利率、现金流）？
@@ -333,11 +324,26 @@ class BusinessModelAnalyzer(AnalyzerBase):
 - **抗风险能力**：现金流质量如何？负债水平高吗？面临哪些行业/政策/竞争风险？
 
 锚点：
-- **5分**：赚钱逻辑清晰+盈利强、难以复制、强规模效应、抗风险能力强
-- **3分**：赚钱逻辑清晰但盈利一般，或规模效应不明显，或有一定风险
+- **4分**：赚钱逻辑清晰+盈利强、难以复制、强规模效应、抗风险能力强
+- **2.5分**：赚钱逻辑清晰但盈利一般，或规模效应不明显，或有一定风险
 - **1分**：赚钱逻辑不清晰、盈利困难、抗风险能力弱
 
-### 3. 增长确定性评估（满分 3 分）
+### 3. 商业模式简单易懂评估（满分 4 分）
+
+评估因素：
+- **业务理解难度**：一个外行能否在10分钟内理解公司如何赚钱？
+- **产品/服务可见性**：公司提供的是否为看得见摸得着的产品或服务？
+- **盈利路径清晰度**：收入来源是否单一明确？是否存在复杂的关联交易或多元跨界？
+- **行业类比性**：是否可以用日常经验类比理解？（如白酒、酱油 vs 半导体设备、金融衍生品）
+
+锚点：
+- **4分**：业务极度简单，一眼就能看懂（如卖水、卖酱油、开银行收息）
+- **2.5分**：业务基本可以理解，但需要一定行业知识（如消费品、医药零售）
+- **1分**：业务复杂难懂，涉及多环节协同或专业技术壁垒（如芯片设计、复杂金融工具）
+
+注意：巴菲特只投资"能力圈"范围内的企业。如果无法理解其商业模式，就不应该投资。
+
+### 4. 增长确定性评估（满分 3 分，供估值模块复用）
 
 核心问题：该公司未来5年盈利增长的确定性如何？
 
@@ -371,12 +377,17 @@ class BusinessModelAnalyzer(AnalyzerBase):
   "business_model_description": "200-500字商业模式描述",
   "income_stability": {{
     "score": X.X,
-    "max_score": 5.0,
+    "max_score": 4.0,
     "reason": "详细说明，引用具体事实"
   }},
   "business_model_quality": {{
     "score": X.X,
-    "max_score": 5.0,
+    "max_score": 4.0,
+    "reason": "详细说明，引用具体事实"
+  }},
+  "business_model_simplicity": {{
+    "score": X.X,
+    "max_score": 4.0,
     "reason": "详细说明，引用具体事实"
   }},
   "growth_certainty": {{
@@ -385,7 +396,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
     "reason": "详细说明，引用具体事实"
   }},
   "total_score": X.X,
-  "max_total": 13.0,
+  "max_total": 15.0,
   "rating": "优秀/良好/中等/较差",
   "key_facts": ["事实1", "事实2"],
   "risk_warnings": ["风险1"]
@@ -406,13 +417,15 @@ class BusinessModelAnalyzer(AnalyzerBase):
             "business_model_description": f"LLM 调用失败: {reason}",
             "income_stability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "business_model_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "business_model_simplicity": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "business_simplicity": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "growth_certainty": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "total_score": 0.0,
         }
 
     @staticmethod
     def _rating(total: float) -> str:
-        # 总分 20 分 = 定性 10 + 定量 10
+        # 总分 20 分 = 定性 12 + 定量 8
         if total >= 17.0:
             return "优秀"
         elif total >= 13.5:

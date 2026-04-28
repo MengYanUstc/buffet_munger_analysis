@@ -68,6 +68,7 @@ class ValuationAnalyzer(AnalyzerBase):
         pb_percentile = val_data.get("pb_percentile_5y")
         ps_percentile = val_data.get("ps_percentile_5y")
         close_price = val_data.get("close_price")
+        total_share = val_data.get("total_share")
 
         # 盈利 CAGR（用于 PEG 和 DCF 增长率序列）
         profit_cagr = self._calculate_profit_cagr(df_fin)
@@ -127,6 +128,8 @@ class ValuationAnalyzer(AnalyzerBase):
             avg_fcf_conversion=avg_fcf_conversion,
             profit_cagr=profit_cagr,
             pe=pe,
+            close_price=close_price,
+            total_share=total_share,
             latest_fcf=latest_fcf,
             fcf_yearly_records=fcf_yearly_records,
         )
@@ -136,7 +139,8 @@ class ValuationAnalyzer(AnalyzerBase):
             "latest_net_profit": latest_net_profit,
             "profit_cagr": profit_cagr,
             "enterprise_value": dcf_result.get("enterprise_value"),
-            "market_cap_approx": dcf_result.get("market_cap_approx"),
+            "market_cap": dcf_result.get("market_cap"),
+            "market_cap_source": dcf_result.get("market_cap_source"),
             "safety_margin": dcf_result.get("safety_margin"),
             "dcf_params": dcf_result.get("dcf_params"),
             "score": dcf_score,
@@ -215,20 +219,28 @@ class ValuationAnalyzer(AnalyzerBase):
         if len(series) < 2:
             return None
 
+        import math
         first = float(series.iloc[0])
         last = float(series.iloc[-1])
+        # 防护：首年/末年非正数、NaN、Inf 均返回 None，避免公式崩溃
+        if not (math.isfinite(first) and math.isfinite(last)):
+            return None
         if first <= 0 or last <= 0:
             return None
 
         n = len(series) - 1
-        cagr = (last / first) ** (1 / n) - 1
-        return round(cagr, 3)
+        try:
+            cagr = (last / first) ** (1 / n) - 1
+            return round(cagr, 3)
+        except Exception:
+            return None
 
     @staticmethod
     def _get_dcf_base_data(df) -> Dict[str, Any]:
         """
         获取 DCF 计算所需的基础数据。
         采用 5 年平均 FCF 转化率（FCF/净利润）作为 base_fcf 的推算依据。
+        防护：净利润 <= 0、非数字、NaN、Inf 均跳过，避免比率无意义或崩溃。
 
         Returns:
             {
@@ -238,10 +250,10 @@ class ValuationAnalyzer(AnalyzerBase):
                 "yearly_records": [{"year": ..., "fcf": ..., "profit": ..., "ratio": ...}],
             }
         """
+        import math
         if df.empty:
             return {}
 
-        # 获取近5年有效数据（FCF和净利润同时非空）
         records = []
         profit_col = None
         for col in ["parent_net_profit", "net_profit"]:
@@ -252,29 +264,36 @@ class ValuationAnalyzer(AnalyzerBase):
         if profit_col is None or "fcf" not in df.columns:
             return {}
 
-        # 取最近5行，逐行检查
         tail_df = df.tail(5)
         for _, row in tail_df.iterrows():
             fcf = row.get("fcf")
             profit = row.get(profit_col)
             report_date = row.get("report_date", "")
             year = str(report_date)[:4] if report_date else ""
-            if pd.notna(fcf) and pd.notna(profit) and float(profit) > 0:
-                ratio = float(fcf) / float(profit)
-                records.append({
-                    "year": year,
-                    "fcf": round(float(fcf), 2),
-                    "profit": round(float(profit), 2),
-                    "ratio": round(ratio, 3),
-                })
+
+            # 防御：非数字、NaN、Inf、零/负利润均跳过
+            try:
+                fcf_val = float(fcf)
+                profit_val = float(profit)
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(fcf_val) and math.isfinite(profit_val)):
+                continue
+            if profit_val <= 0:
+                continue
+
+            ratio = fcf_val / profit_val
+            records.append({
+                "year": year,
+                "fcf": round(fcf_val, 2),
+                "profit": round(profit_val, 2),
+                "ratio": round(ratio, 3),
+            })
 
         if not records:
             return {}
 
-        # 5年平均 FCF 转化率（各年比率的算术平均）
         avg_conversion = sum(r["ratio"] for r in records) / len(records)
-
-        # 最近年度数据
         latest = records[-1]
 
         return {
@@ -286,11 +305,21 @@ class ValuationAnalyzer(AnalyzerBase):
 
     @staticmethod
     def _calculate_peg(pe: Optional[float], profit_cagr: Optional[float]) -> Optional[float]:
-        """计算 PEG = PE / (CAGR × 100)。"""
-        if pe is None or profit_cagr is None or profit_cagr <= 0:
+        """计算 PEG = PE / (CAGR × 100)。
+        防护：CAGR 缺失、非正、极小（<0.001）时返回 None，避免除零或失真。"""
+        import math
+        if pe is None or profit_cagr is None:
             return None
-        peg = pe / (profit_cagr * 100)
-        return peg
+        if not math.isfinite(profit_cagr) or profit_cagr <= 0:
+            return None
+        # 极小 CAGR 会导致 PEG 极度放大，无意义
+        if profit_cagr < 0.001:
+            return None
+        try:
+            peg = pe / (profit_cagr * 100)
+            return peg
+        except Exception:
+            return None
 
     def _calculate_dcf_detail(
         self,
@@ -298,32 +327,60 @@ class ValuationAnalyzer(AnalyzerBase):
         avg_fcf_conversion: Optional[float],
         profit_cagr: Optional[float],
         pe: Optional[float],
+        close_price: Optional[float] = None,
+        total_share: Optional[float] = None,
         latest_fcf: Optional[float] = None,
         fcf_yearly_records: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """
         计算 DCF 安全边际详细结果。
-        base_fcf = 最近年度净利润 × 5年平均FCF转化率（参考商业模式分析的FCF转化率计算方式）。
-        当前市值近似 = PE_ttm × 最近年度净利润（万元）。
+        base_fcf = 最近年度净利润 × 5年平均FCF转化率。
+        必须使用准确市值 = close_price × total_share（万元）；
+        若 total_share 缺失，报告生成失败。
         """
+        import math
+        # 数据缺失检查
         if latest_net_profit is None or avg_fcf_conversion is None or profit_cagr is None or pe is None:
             return {
                 "score": 0.0,
                 "enterprise_value": None,
-                "market_cap_approx": None,
+                "market_cap": None,
                 "safety_margin": None,
                 "dcf_params": None,
                 "reason": "净利润、FCF转化率、CAGR 或 PE 数据缺失，无法计算 DCF",
+            }
+
+        # 数值有效性检查：非有限值、负/零均拒绝
+        if not (math.isfinite(latest_net_profit) and math.isfinite(avg_fcf_conversion)
+                and math.isfinite(profit_cagr) and math.isfinite(pe)):
+            return {
+                "score": 0.0,
+                "enterprise_value": None,
+                "market_cap": None,
+                "safety_margin": None,
+                "dcf_params": None,
+                "reason": "净利润、FCF转化率、CAGR 或 PE 包含非有限值（NaN/Inf），无法计算 DCF",
             }
 
         if latest_net_profit <= 0 or pe <= 0 or avg_fcf_conversion < 0:
             return {
                 "score": 0.0,
                 "enterprise_value": None,
-                "market_cap_approx": None,
+                "market_cap": None,
                 "safety_margin": None,
                 "dcf_params": None,
                 "reason": "净利润、PE 为负/零，或 FCF 转化率为负，无法计算 DCF",
+            }
+
+        # 必须获取准确市值
+        if close_price is None or total_share is None or close_price <= 0 or total_share <= 0:
+            return {
+                "score": 0.0,
+                "enterprise_value": None,
+                "market_cap": None,
+                "safety_margin": None,
+                "dcf_params": None,
+                "reason": "缺少收盘价或总股本数据，无法计算准确市值，DCF 安全边际报告生成失败",
             }
 
         # base_fcf 采用 5年平均FCF转化率 × 最近年度净利润
@@ -335,21 +392,22 @@ class ValuationAnalyzer(AnalyzerBase):
             profit_cagr=profit_cagr,
         )
 
-        # 近似市值
-        market_cap_approx = pe * latest_net_profit
+        # 准确市值（收盘价 × 总股本，单位万元）
+        market_cap = close_price * total_share
+        market_cap_source = "准确市值（收盘价×总股本）"
 
         # 安全边际评分
         score = calculate_dcf_safety_margin_score(
-            dcf["enterprise_value"], market_cap_approx
+            dcf["enterprise_value"], market_cap
         )
 
-        safety_margin = dcf["enterprise_value"] / market_cap_approx if market_cap_approx > 0 else 0
+        safety_margin = dcf["enterprise_value"] / market_cap if market_cap > 0 else 0
 
         reason = (
             f"5年平均FCF转化率={avg_fcf_conversion:.2f}，"
             f"base_fcf={base_fcf:.0f}万（={latest_net_profit:.0f}万×{avg_fcf_conversion:.2f}），"
             f"DCF企业价值={dcf['enterprise_value']:.0f}万，"
-            f"近似市值={market_cap_approx:.0f}万，"
+            f"准确市值={market_cap:.0f}万，"
             f"安全边际={safety_margin:.2f}，"
             f"得分={score:.0f}分（满分4分）"
         )
@@ -357,7 +415,8 @@ class ValuationAnalyzer(AnalyzerBase):
         return {
             "score": score,
             "enterprise_value": dcf["enterprise_value"],
-            "market_cap_approx": round(market_cap_approx, 2),
+            "market_cap": round(market_cap, 2),
+            "market_cap_source": market_cap_source,
             "safety_margin": round(safety_margin, 4),
             "dcf_params": {
                 "base_fcf": base_fcf,

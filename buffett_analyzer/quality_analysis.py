@@ -7,8 +7,8 @@ from typing import Dict, Any
 import numpy as np
 
 from .scorer import calculate_cagr, analyze_roe_stability, analyze_debt_ratio
-from .quality_scoring import AiScoringEngine, get_default_plugins
-from .data_warehouse.database import Database
+from .quality_scoring import get_default_plugins
+from .quality_scoring.plugin_base import ScoringResult
 from .data_warehouse.collector import DataCollector
 from .core import AnalyzerBase, AnalysisReport
 
@@ -79,7 +79,7 @@ class QualityAnalyzer(AnalyzerBase):
             if len(latest_ratio_series) > 0:
                 debt_ratio = float(latest_ratio_series.iloc[-1])
 
-        # 3. 构建上下文并运行评分引擎
+        # 3. 构建上下文并运行评分
         context = {
             "stock_code": self.stock_code,
             "industry_type": self.industry_type,
@@ -94,11 +94,19 @@ class QualityAnalyzer(AnalyzerBase):
         }
 
         plugins = get_default_plugins()
-        db = Database()
-        engine = AiScoringEngine(plugins=plugins, db=db)
-        scoring_results = engine.run(context)
+        scoring_results: Dict[str, ScoringResult] = {}
+        for plugin in plugins:
+            try:
+                scoring_results[plugin.dimension_id] = plugin.compute(context)
+            except Exception as e:
+                scoring_results[plugin.dimension_id] = ScoringResult(
+                    dimension_id=plugin.dimension_id,
+                    name=plugin.name,
+                    score=0.0,
+                    max_score=plugin.max_score,
+                    error=f"compute error: {e}",
+                )
 
-        # 4. 组装输出
         roe_res = scoring_results.get("roe")
         roic_res = scoring_results.get("roic")
         revenue_res = scoring_results.get("revenue_growth")
@@ -174,10 +182,7 @@ class QualityAnalyzer(AnalyzerBase):
         }
 
         summary = {
-            "script_calculated_score": total_score,
-            "ai_qualitative_score": 0.0,
-            "current_total": total_score,
-            "max_possible_total": total_score,
+            "total_score": total_score,
             "full_score": 20.0,
         }
 

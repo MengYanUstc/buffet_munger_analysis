@@ -35,7 +35,7 @@ class CozeLLMClient:
         self.api_token = api_token or os.getenv("COZE_API_TOKEN", "")
         self.base_url = base_url or os.getenv("COZE_BASE_URL", "https://6n7dqg7m2x.coze.site/stream_run")
         self.project_id = project_id or os.getenv("COZE_PROJECT_ID", "7630103598810136595")
-        self.session_id = session_id or os.getenv("COZE_SESSION_ID", "YqOYJpGsWVZYJTY0dN1-4")
+        self.session_id = session_id or os.getenv("COZE_SESSION_ID", "zv8l_1tiNT4ISIMpuHwf0")
 
     def is_configured(self) -> bool:
         return bool(self.api_token)

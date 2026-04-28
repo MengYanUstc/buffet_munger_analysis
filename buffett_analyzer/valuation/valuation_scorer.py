@@ -260,7 +260,7 @@ def calculate_dcf_safety_margin_score(
 
     Args:
         enterprise_value: DCF 计算的企业价值（万元）
-        market_cap_approx: 近似当前市值 = PE_ttm × 最近年度净利润（万元）
+        market_cap_approx: 准确市值（万元）= 收盘价 × 总股本
 
     Returns:
         0-4分

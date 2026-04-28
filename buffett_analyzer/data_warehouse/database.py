@@ -57,6 +57,7 @@ class Database:
                     pe_percentile_5y REAL,
                     pb_percentile_5y REAL,
                     ps_percentile_5y REAL,
+                    total_share REAL,
                     updated_at TEXT,
                     PRIMARY KEY (stock_code, trade_date)
                 )
@@ -245,29 +246,6 @@ class Database:
             )
             conn.commit()
 
-            # 新增 AI 定性评分审计表
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS ai_qualitative_scores (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    stock_code TEXT,
-                    industry_type TEXT,
-                    dimension_id TEXT,
-                    dimension_name TEXT,
-                    score_type TEXT,
-                    base_score REAL,
-                    ai_adjustment REAL,
-                    final_score REAL,
-                    max_score REAL,
-                    reason TEXT,
-                    details_json TEXT,
-                    model_name TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.commit()
-
             # 兼容旧表：为 stock_daily_prices 增加 pe_ttm, pb, ps_ttm 列
             dp_cols = [r[1] for r in conn.execute("PRAGMA table_info(stock_daily_prices)")]
             for col_name, col_type in [("pe_ttm", "REAL"), ("pb", "REAL"), ("ps_ttm", "REAL")]:
@@ -275,29 +253,11 @@ class Database:
                     conn.execute(f"ALTER TABLE stock_daily_prices ADD COLUMN {col_name} {col_type}")
                     conn.commit()
 
-            # 兼容旧表：为 ai_qualitative_scores 增加 details_json 列
-            aq_cols = [r[1] for r in conn.execute("PRAGMA table_info(ai_qualitative_scores)")]
-            if "details_json" not in aq_cols:
-                conn.execute("ALTER TABLE ai_qualitative_scores ADD COLUMN details_json TEXT")
+            # 兼容旧表：为 valuation_metrics 增加 total_share 列
+            vm_cols = [r[1] for r in conn.execute("PRAGMA table_info(valuation_metrics)")]
+            if "total_share" not in vm_cols:
+                conn.execute("ALTER TABLE valuation_metrics ADD COLUMN total_share REAL")
                 conn.commit()
-
-            # 新增 AI 定性评分缓存表（24小时缓存）
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS ai_qualitative_cache (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    stock_code TEXT,
-                    industry_type TEXT,
-                    facts_hash TEXT,
-                    response_json TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_ai_cache_lookup ON ai_qualitative_cache(stock_code, industry_type, facts_hash, created_at)"
-            )
-            conn.commit()
 
     def fetchone(self, sql: str, parameters=()):
         with self._connect() as conn:

@@ -1,28 +1,59 @@
 """
-毛利率稳定性评分工具（定量部分，满分 4 分）
+毛利率评分工具（定量部分，满分 5 分）
+拆分为：
+  - 毛利率绝对值评分（2 分）
+  - 毛利率稳定性评分（3 分）
 """
 
 from typing import List, Dict, Any
 import numpy as np
 
 
-def calculate_gross_margin_stability_score(gross_margin_std: float) -> float:
+# ------------------------------------------------------------------
+# 1. 毛利率绝对值评分（2 分）
+# ------------------------------------------------------------------
+
+def calculate_gross_margin_absolute_score(avg_gross_margin: float) -> float:
     """
-    计算毛利率稳定性基础评分。
+    计算毛利率绝对值评分。
 
     Args:
-        gross_margin_std: 过去5年毛利率标准差
+        avg_gross_margin: 过去5年平均毛利率（百分比，如 45.2 表示 45.2%）
 
     Returns:
-        毛利率稳定性建议基础分（0-4分）
+        毛利率绝对值评分（0-2分）
     """
-    if gross_margin_std <= 1.5:
-        return 4.0
-    elif gross_margin_std <= 3:
-        return 3.0
-    elif gross_margin_std <= 4.5:
+    if avg_gross_margin >= 50:
         return 2.0
-    elif gross_margin_std <= 6:
+    elif avg_gross_margin >= 40:
+        return 1.5
+    elif avg_gross_margin >= 30:
+        return 1.0
+    elif avg_gross_margin >= 20:
+        return 0.5
+    else:
+        return 0.0
+
+
+# ------------------------------------------------------------------
+# 2. 毛利率稳定性评分（3 分）
+# ------------------------------------------------------------------
+
+def calculate_gross_margin_stability_base_score(gross_margin_cv: float) -> float:
+    """
+    计算毛利率稳定性基础评分（由变异系数 CV 决定）。
+
+    Args:
+        gross_margin_cv: 过去5年毛利率变异系数（CV = 标准差 / 均值），小数形式
+
+    Returns:
+        毛利率稳定性基础分（0-3分）
+    """
+    if gross_margin_cv <= 0.03:
+        return 3.0
+    elif gross_margin_cv <= 0.05:
+        return 2.0
+    elif gross_margin_cv <= 0.08:
         return 1.0
     else:
         return 0.0
@@ -71,55 +102,88 @@ def calculate_gross_margin_trend(gross_margin_years: List[float]) -> Dict[str, A
 
 def compute_gross_margin_score(gross_margin_values: List[float]) -> Dict[str, Any]:
     """
-    综合计算毛利率稳定性评分（含趋势调整）。
+    综合计算毛利率评分（含绝对值和稳定性两部分）。
 
     规则：
-      - 基础分由标准差决定（0-4 分）
-      - 趋势调整：明显上升+2，温和上升+1，温和下降-0.5，明显下降-1.5
-      - 最终分限制在 [0, 4]
+      - 绝对值评分由平均毛利率决定（0-2 分）
+      - 稳定性基础分由变异系数（CV = 标准差/均值）决定（0-3 分）
+      - 趋势调整：明显上升+1，温和上升+0.5，温和下降-0.5，明显下降-1
+      - 稳定性最终分限制在 [0, 3]
 
     Returns:
         {
-            "base_score": float,      # 标准差基础分
-            "trend_adjustment": float,# 趋势调整值
-            "final_score": float,     # 最终分（0-4）
-            "std": float,             # 标准差
+            "absolute": {
+                "score": float,       # 绝对值评分（0-2）
+                "avg_margin": float,  # 平均毛利率
+            },
+            "stability": {
+                "base_score": float,      # CV基础分（0-3）
+                "trend_adjustment": float,# 趋势调整值
+                "final_score": float,     # 稳定性最终分（0-3）
+                "cv": float,              # 变异系数（百分比）
+                "std": float,             # 标准差
+                "trend": dict,            # 趋势分析结果
+            },
+            "total_score": float,     # 两项合计（0-5）
             "values": list,           # 原始值
-            "trend": dict,            # 趋势分析结果
         }
     """
     if len(gross_margin_values) < 5:
         return {
-            "base_score": None,
-            "trend_adjustment": None,
-            "final_score": None,
-            "std": None,
+            "absolute": {
+                "score": None,
+                "avg_margin": None,
+            },
+            "stability": {
+                "base_score": None,
+                "trend_adjustment": None,
+                "final_score": None,
+                "cv": None,
+                "std": None,
+                "trend": {"trend_direction": "数据不足", "note": f"仅有 {len(gross_margin_values)} 年数据"},
+            },
+            "total_score": None,
             "values": [round(v, 2) for v in gross_margin_values],
-            "trend": {"trend_direction": "数据不足", "note": f"仅有 {len(gross_margin_values)} 年数据"},
         }
 
+    # 绝对值评分
+    avg_margin = float(np.mean(gross_margin_values))
+    absolute_score = calculate_gross_margin_absolute_score(avg_margin)
+
+    # 稳定性评分（基于变异系数 CV = 标准差 / 均值）
     std = float(np.std(gross_margin_values, ddof=1))
-    base_score = calculate_gross_margin_stability_score(std)
+    cv = std / abs(avg_margin) if avg_margin != 0 else 0.0
+    stability_base = calculate_gross_margin_stability_base_score(cv)
     trend = calculate_gross_margin_trend(gross_margin_values)
 
-    # 趋势调整（折中方案：明显上升+2，温和上升+1，温和下降-0.5，明显下降-1.5）
+    # 趋势调整
     trend_adj = 0.0
     if trend["trend_direction"] == "明显上升":
-        trend_adj = 2.0
-    elif trend["trend_direction"] == "温和上升":
         trend_adj = 1.0
+    elif trend["trend_direction"] == "温和上升":
+        trend_adj = 0.5
     elif trend["trend_direction"] == "温和下降":
         trend_adj = -0.5
     elif trend["trend_direction"] == "明显下降":
-        trend_adj = -1.5
+        trend_adj = -1.0
 
-    final_score = round(max(0.0, min(4.0, base_score + trend_adj)) * 2) / 2
+    stability_final = round(max(0.0, min(3.0, stability_base + trend_adj)) * 2) / 2
+
+    total_score = round(absolute_score + stability_final, 1)
 
     return {
-        "base_score": base_score,
-        "trend_adjustment": trend_adj,
-        "final_score": final_score,
-        "std": round(std, 2),
+        "absolute": {
+            "score": absolute_score,
+            "avg_margin": round(avg_margin, 2),
+        },
+        "stability": {
+            "base_score": stability_base,
+            "trend_adjustment": trend_adj,
+            "final_score": stability_final,
+            "cv": round(cv * 100, 2),   # 变异系数（百分比形式，如 4.76%）
+            "std": round(std, 2),
+            "trend": trend,
+        },
+        "total_score": total_score,
         "values": [round(v, 2) for v in gross_margin_values],
-        "trend": trend,
     }

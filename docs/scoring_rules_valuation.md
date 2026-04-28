@@ -148,9 +148,11 @@ profit_cagr 为近5年净利润复合增长率（小数形式，如 0.15 表示 
 
 ### 4.4 安全边际评分
 
-`近似市值 = PE_ttm * 最近年度净利润`
+**必须使用准确市值**：`市值 = 收盘价 × 总股本`（数据来源：akshare `stock_individual_info_em`，重试3次）
 
-`safety_margin = DCF企业价值 / 近似市值`
+若总股本获取失败，DCF 安全边际报告生成失败。
+
+`safety_margin = DCF企业价值 / 市值`
 
 | safety_margin | 得分 |
 |---------------|------|
@@ -160,7 +162,7 @@ profit_cagr 为近5年净利润复合增长率（小数形式，如 0.15 表示 
 | >= 1.0 | 1.0 |
 | < 1.0 | 0.0 |
 
-**数据流**：`SQLite -> fcf + net_profit + pe_ttm -> calculate_dcf_valuation_total() -> calculate_dcf_safety_margin_score()`
+**数据流**：`SQLite -> fcf + net_profit + total_share + close_price -> calculate_dcf_valuation_total() -> calculate_dcf_safety_margin_score()`
 
 ---
 
