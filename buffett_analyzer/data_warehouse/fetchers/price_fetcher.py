@@ -120,7 +120,7 @@ class PriceFetcher:
         start_date: datetime.date, end_date: datetime.date
     ) -> pd.DataFrame:
         """使用 baostock 拉取 A股 K线。复用 BaoStockFetcher 的会话管理。"""
-        bs_code = self._to_baostock_code(stock_code)
+        bs_code = BaoStockFetcher._to_baostock_code(stock_code)
         if not bs_code:
             return pd.DataFrame()
 
@@ -155,18 +155,6 @@ class PriceFetcher:
             return pd.DataFrame()
 
         return self._normalize_baostock(df, stock_code)
-
-    @staticmethod
-    def _to_baostock_code(stock_code: str) -> Optional[str]:
-        """将 A股代码转换为 baostock 格式。"""
-        if not stock_code or len(stock_code) != 6:
-            return None
-        first = stock_code[0]
-        if first == "6":
-            return f"sh.{stock_code}"
-        elif first in ("0", "3"):
-            return f"sz.{stock_code}"
-        return None
 
     @staticmethod
     def _normalize_baostock(df: pd.DataFrame, stock_code: str) -> pd.DataFrame:

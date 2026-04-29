@@ -114,13 +114,6 @@ class QualityAnalyzer(AnalyzerBase):
         roe_stab_res = scoring_results.get("roe_stability")
         debt_res = scoring_results.get("debt_ratio")
 
-        script_score = round(
-            (roe_res.score if roe_res else 0.0)
-            + (roic_res.score if roic_res else 0.0)
-            + (revenue_res.score if revenue_res else 0.0)
-            + (profit_res.score if profit_res else 0.0),
-            2,
-        )
         total_score = round(
             (roe_res.score if roe_res else 0.0)
             + (roic_res.score if roic_res else 0.0)

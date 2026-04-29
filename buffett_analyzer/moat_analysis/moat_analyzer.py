@@ -13,6 +13,16 @@ from .gross_margin_scorer import compute_gross_margin_score
 from ..data_warehouse.collector import DataCollector
 
 
+def _extract_level(text, default: int = 1) -> int:
+    """从等级字符串中提取数值等级，如 '强(5)' -> 5。"""
+    text = str(text)
+    m = re.search(r'\((\d+)\)', text)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'\d+', text)
+    return int(m.group(0)) if m else default
+
+
 class MoatAnalyzer(AnalyzerBase):
     module_id = "moat"
     module_name = "护城河分析"
@@ -410,15 +420,8 @@ class MoatAnalyzer(AnalyzerBase):
         difficulty_str = str(data.get("breakthrough_difficulty", ""))
         trend_str = str(data.get("trend_judgment", ""))
 
-        def _extract_level(text: str) -> int:
-            m = re.search(r'\((\d+)\)', text)
-            if m:
-                return int(m.group(1))
-            m = re.search(r'\d+', text)
-            return int(m.group(0)) if m else 0
-
-        difficulty = _extract_level(difficulty_str)
-        trend = _extract_level(trend_str)
+        difficulty = _extract_level(difficulty_str, default=0)
+        trend = _extract_level(trend_str, default=0)
 
         # 1. 历史时长基础分
         if years > 50:
@@ -485,19 +488,12 @@ class MoatAnalyzer(AnalyzerBase):
           - customer_stickiness: 客户粘性等级（如"极高(5)"）
           - price_sensitivity: 价格敏感度等级（如"低(1)"）
         """
-        def _extract_level(text: str) -> int:
-            m = re.search(r'\((\d+)\)', text)
-            if m:
-                return int(m.group(1))
-            m = re.search(r'\d+', text)
-            return int(m.group(0)) if m else 1
-
         # LLM 有时会返回 pricing_power 而不是 pricing_ability，做兼容
         pricing_text = data.get("pricing_ability", "") or data.get("pricing_power", "")
-        pricing = _extract_level(str(pricing_text))
-        uniqueness = _extract_level(str(data.get("product_uniqueness", "")))
-        stickiness = _extract_level(str(data.get("customer_stickiness", "")))
-        sensitivity = _extract_level(str(data.get("price_sensitivity", "")))
+        pricing = _extract_level(pricing_text)
+        uniqueness = _extract_level(data.get("product_uniqueness", ""))
+        stickiness = _extract_level(data.get("customer_stickiness", ""))
+        sensitivity = _extract_level(data.get("price_sensitivity", ""))
 
         # 1. 提价能力 (1-5) → 0~3.5分（核心权重）
         pricing_map = {5: 3.5, 4: 2.5, 3: 1.5, 2: 0.5, 1: 0.0}
@@ -535,17 +531,10 @@ class MoatAnalyzer(AnalyzerBase):
           - demand_stability: 需求稳定性等级（如"刚需(4)"）
           - industry_growth: 行业成长性等级（如"高(5)"）
         """
-        def _extract_level(text: str) -> int:
-            m = re.search(r'\((\d+)\)', text)
-            if m:
-                return int(m.group(1))
-            m = re.search(r'\d+', text)
-            return int(m.group(0)) if m else 1
-
-        concentration = _extract_level(str(data.get("industry_concentration", "")))
-        barrier = _extract_level(str(data.get("entry_barrier", "")))
-        stability = _extract_level(str(data.get("demand_stability", "")))
-        growth = _extract_level(str(data.get("industry_growth", "")))
+        concentration = _extract_level(data.get("industry_concentration", ""))
+        barrier = _extract_level(data.get("entry_barrier", ""))
+        stability = _extract_level(data.get("demand_stability", ""))
+        growth = _extract_level(data.get("industry_growth", ""))
 
         # 1. 行业集中度 (1-5) → 0~2.5分（核心权重）
         concentration_map = {5: 2.5, 4: 2.0, 3: 1.0, 2: 0.5, 1: 0.0}
