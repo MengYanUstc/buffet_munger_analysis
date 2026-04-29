@@ -466,8 +466,8 @@ class MoatAnalyzer(AnalyzerBase):
         uniqueness_map = {4: 2.0, 3: 1.0, 2: 0.5, 1: 0.0}
         uniqueness_score = uniqueness_map.get(uniqueness, 0.0)
 
-        # 3. 客户粘性 (1-5) → 0~0.5分（辅助因素）
-        stickiness_map = {5: 0.5, 4: 0.5, 3: 0.0, 2: 0.0, 1: 0.0}
+        # 3. 客户粘性 (1-5) → -1.0~+1.0分
+        stickiness_map = {5: 1.0, 4: 0.5, 3: 0.0, 2: -0.5, 1: -1.0}
         stickiness_score = stickiness_map.get(stickiness, 0.0)
 
         # 4. 价格敏感度 (1-3，反转) → -0.5~+1.0分（微调因素）
