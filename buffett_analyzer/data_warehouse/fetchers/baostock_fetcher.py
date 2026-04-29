@@ -46,6 +46,9 @@ class BaoStockFetcher:
             return None
         return float(np.sum(clean <= current_val) / len(clean) * 100)
 
+    # 计算历史分位所需的最小月末采样点数（约2.5年）
+    MIN_MONTHLY_SAMPLES = 30
+
     @staticmethod
     def _compute_valuation_from_df(df: pd.DataFrame) -> Dict[str, Any]:
         """从日K DataFrame 计算估值指标和历史分位。"""
@@ -89,6 +92,17 @@ class BaoStockFetcher:
         pb_val = latest_row.get("pb")
         ps_val = latest_row.get("ps_ttm")
 
+        # 样本量校验：月末有效采样点不足时，历史分位不可靠，返回None
+        pe_count = monthly_df["pe_ttm"].notna().sum() if "pe_ttm" in monthly_df.columns else 0
+        pb_count = monthly_df["pb"].notna().sum() if "pb" in monthly_df.columns else 0
+        ps_count = monthly_df["ps_ttm"].notna().sum() if "ps_ttm" in monthly_df.columns else 0
+        min_samples = BaoStockFetcher.MIN_MONTHLY_SAMPLES
+        sample_insufficient = pe_count < min_samples or pb_count < min_samples or ps_count < min_samples
+
+        pe_pct = BaoStockFetcher._percentile(monthly_df["pe_ttm"], pe_val) if pe_count >= min_samples else None
+        pb_pct = BaoStockFetcher._percentile(monthly_df["pb"], pb_val) if pb_count >= min_samples else None
+        ps_pct = BaoStockFetcher._percentile(monthly_df["ps_ttm"], ps_val) if ps_count >= min_samples else None
+
         return {
             "valuation_df": monthly_df,
             "latest": {
@@ -97,9 +111,13 @@ class BaoStockFetcher:
                 "pe_ttm": float(pe_val) if pd.notna(pe_val) else None,
                 "pb": float(pb_val) if pd.notna(pb_val) else None,
                 "ps_ttm": float(ps_val) if pd.notna(ps_val) else None,
-                "pe_percentile_5y": BaoStockFetcher._percentile(monthly_df["pe_ttm"], pe_val),
-                "pb_percentile_5y": BaoStockFetcher._percentile(monthly_df["pb"], pb_val),
-                "ps_percentile_5y": BaoStockFetcher._percentile(monthly_df["ps_ttm"], ps_val),
+                "pe_percentile_5y": pe_pct,
+                "pb_percentile_5y": pb_pct,
+                "ps_percentile_5y": ps_pct,
+                "_sample_count_pe": int(pe_count),
+                "_sample_count_pb": int(pb_count),
+                "_sample_count_ps": int(ps_count),
+                "_sample_insufficient": sample_insufficient,
             }
         }
 
@@ -164,23 +182,41 @@ class BaoStockFetcher:
                 "daily_df": pd.DataFrame,       # 完整的日K数据（供写入缓存）
             }
         """
-        # 1. 尝试使用缓存数据
+        # 1. 尝试使用缓存数据（需满足：有PE/PB且月末有效采样点充足）
         if daily_df is not None and not daily_df.empty:
-            # 检查是否有有效的PE/PB/PS数据
             has_pe = "pe_ttm" in daily_df.columns and daily_df["pe_ttm"].notna().any()
             has_pb = "pb" in daily_df.columns and daily_df["pb"].notna().any()
             if has_pe and has_pb:
-                result = self._compute_valuation_from_df(daily_df.copy())
-                result["daily_df"] = daily_df
-                return result
+                # 深度检查：缓存中有效月末采样点是否足够
+                tmp_df = daily_df.copy()
+                tmp_df["trade_date"] = pd.to_datetime(tmp_df["trade_date"])
+                tmp_df["year_month"] = tmp_df["trade_date"].dt.to_period("M")
+                monthly = tmp_df.groupby("year_month").tail(1)
+                pe_count = monthly["pe_ttm"].notna().sum() if "pe_ttm" in monthly.columns else 0
+                pb_count = monthly["pb"].notna().sum() if "pb" in monthly.columns else 0
+                if pe_count >= self.MIN_MONTHLY_SAMPLES and pb_count >= self.MIN_MONTHLY_SAMPLES:
+                    result = self._compute_valuation_from_df(daily_df.copy())
+                    result["daily_df"] = daily_df
+                    return result
+                else:
+                    print(f"[BaoStockFetcher] {stock_code} 缓存估值样本不足"
+                          f"(PE={pe_count}, PB={pb_count} < {self.MIN_MONTHLY_SAMPLES})，"
+                          f"将重新拉取完整数据")
 
-        # 2. 缓存缺失或数据不完整，通过 baostock 拉取
+        # 2. 缓存缺失、数据不完整或样本不足，通过 baostock 拉取完整5年数据
         df = self._fetch_from_baostock(stock_code)
         if df.empty:
             return {"valuation_df": pd.DataFrame(), "latest": {}, "daily_df": pd.DataFrame()}
 
         result = self._compute_valuation_from_df(df)
         result["daily_df"] = df
+        # 若拉取后仍样本不足（如新股），给出警告
+        if result.get("latest", {}).get("_sample_insufficient"):
+            pe_cnt = result["latest"].get("_sample_count_pe", 0)
+            pb_cnt = result["latest"].get("_sample_count_pb", 0)
+            print(f"[BaoStockFetcher] 警告：{stock_code} baostock 全量拉取后"
+                  f"估值样本仍不足(PE={pe_cnt}, PB={pb_cnt})，"
+                  f"可能为上市时间较短或数据源缺失")
         return result
 
     def __del__(self):

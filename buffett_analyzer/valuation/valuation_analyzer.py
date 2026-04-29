@@ -69,6 +69,10 @@ class ValuationAnalyzer(AnalyzerBase):
         ps_percentile = val_data.get("ps_percentile_5y")
         close_price = val_data.get("close_price")
         total_share = val_data.get("total_share")
+        sample_insufficient = val_data.get("_sample_insufficient", False)
+        sample_count_pe = val_data.get("_sample_count_pe")
+        sample_count_pb = val_data.get("_sample_count_pb")
+        sample_count_ps = val_data.get("_sample_count_ps")
 
         # 盈利 CAGR（用于 PEG 和 DCF 增长率序列）
         profit_cagr = self._calculate_profit_cagr(df_fin)
@@ -107,7 +111,12 @@ class ValuationAnalyzer(AnalyzerBase):
             "ps_percentile_bonus": calculate_pb_ps_percentile_bonus(ps_percentile),
             "score": rel_score,
             "max_score": 4.0,
-            "reason": self._rel_reason(pe_percentile, pb_percentile, ps_percentile, rel_score),
+            "reason": self._rel_reason(pe_percentile, pb_percentile, ps_percentile, rel_score,
+                                       sample_insufficient, sample_count_pe, sample_count_pb, sample_count_ps),
+            "_sample_insufficient": sample_insufficient,
+            "_sample_count_pe": sample_count_pe,
+            "_sample_count_pb": sample_count_pb,
+            "_sample_count_ps": sample_count_ps,
         }
 
         # 4.3 长期 PEG（3分）
@@ -208,7 +217,7 @@ class ValuationAnalyzer(AnalyzerBase):
         if df.empty:
             return None
         profit_col = None
-        for col in ["parent_net_profit", "net_profit", "deduct_net_profit"]:
+        for col in ["deduct_net_profit", "parent_net_profit", "net_profit"]:
             if col in df.columns and df[col].notna().any():
                 profit_col = col
                 break
@@ -256,7 +265,7 @@ class ValuationAnalyzer(AnalyzerBase):
 
         records = []
         profit_col = None
-        for col in ["parent_net_profit", "net_profit"]:
+        for col in ["deduct_net_profit", "parent_net_profit", "net_profit"]:
             if col in df.columns:
                 profit_col = col
                 break
@@ -498,7 +507,8 @@ class ValuationAnalyzer(AnalyzerBase):
         return f"{'，'.join(parts)}，绝对估值得分={score:.1f}分（满分6分）"
 
     @staticmethod
-    def _rel_reason(pe_pct, pb_pct, ps_pct, score) -> str:
+    def _rel_reason(pe_pct, pb_pct, ps_pct, score,
+                    sample_insufficient=False, pe_cnt=None, pb_cnt=None, ps_cnt=None) -> str:
         parts = []
         if pe_pct is not None:
             parts.append(f"PE历史分位={pe_pct:.1f}%")
@@ -506,7 +516,10 @@ class ValuationAnalyzer(AnalyzerBase):
             parts.append(f"PB历史分位={pb_pct:.1f}%")
         if ps_pct is not None:
             parts.append(f"PS历史分位={ps_pct:.1f}%")
-        return f"{'，'.join(parts)}，相对估值得分={score:.1f}分（满分4分）"
+        reason = f"{'，'.join(parts)}，相对估值得分={score:.1f}分（满分4分）"
+        if sample_insufficient:
+            reason += f"【警告：历史估值样本不足（PE={pe_cnt}, PB={pb_cnt}, PS={ps_cnt}个月末点），分位数据不可靠】"
+        return reason
 
     @staticmethod
     def _peg_reason(peg, cagr, score) -> str:

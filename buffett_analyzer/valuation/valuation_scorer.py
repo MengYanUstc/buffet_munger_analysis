@@ -29,27 +29,27 @@ def calculate_pe_base_score(pe: Optional[float]) -> float:
 
     规则：
     - PE <= 0（亏损）或 PE > 100（异常）：0分
-    - PE < 12：6分
-    - PE < 15：5分
-    - PE < 20：4分
-    - PE < 25：3分
-    - PE < 30：2分
-    - PE < 35：1分
-    - PE >= 35：0分
+    - PE < 15：6分
+    - PE < 20：5分
+    - PE < 25：4分
+    - PE < 30：3分
+    - PE < 35：2分
+    - PE < 40：1分
+    - PE >= 40：0分
     """
     if pe is None or pe <= 0 or pe > 100:
         return 0.0
-    if pe < 12:
+    if pe < 15:
         return 6.0
-    elif pe < 15:
-        return 5.0
     elif pe < 20:
-        return 4.0
+        return 5.0
     elif pe < 25:
-        return 3.0
+        return 4.0
     elif pe < 30:
-        return 2.0
+        return 3.0
     elif pe < 35:
+        return 2.0
+    elif pe < 40:
         return 1.0
     else:
         return 0.0
@@ -172,8 +172,6 @@ def calculate_long_term_peg_score(
     else:
         base = 0.0
 
-    if absolute_valuation_score is not None and absolute_valuation_score >= 6.0:
-        return max(1.0, base)
     return base
 
 

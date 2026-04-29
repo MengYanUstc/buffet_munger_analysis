@@ -439,8 +439,10 @@ class MoatAnalyzer(AnalyzerBase):
 
         # 2. 周期考验调整
         if cycles >= 3:
-            cycle_adj = 1.0
+            cycle_adj = 1.5
         elif cycles >= 2:
+            cycle_adj = 1.0
+        elif cycles >= 1:
             cycle_adj = 0.5
         else:
             cycle_adj = 0.0

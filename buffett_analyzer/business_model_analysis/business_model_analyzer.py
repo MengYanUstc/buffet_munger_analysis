@@ -179,11 +179,20 @@ class BusinessModelAnalyzer(AnalyzerBase):
         """
         try:
             df = self.collector.cache.read_financial_reports(self.stock_code)
-            if df.empty or "capex" not in df.columns or "parent_net_profit" not in df.columns:
-                return {"final_score": None, "reason": "数据库中缺少资本开支或净利润数据"}
+            if df.empty or "capex" not in df.columns:
+                return {"final_score": None, "reason": "数据库中缺少资本开支数据"}
+
+            # 优先用扣非净利润，缺失时 fallback 到归母净利润
+            profit_col = None
+            for col in ["deduct_net_profit", "parent_net_profit", "net_profit"]:
+                if col in df.columns and df[col].notna().any():
+                    profit_col = col
+                    break
+            if profit_col is None:
+                return {"final_score": None, "reason": "数据库中缺少净利润数据"}
 
             capex_values = df["capex"].dropna().tail(5).tolist()
-            profit_values = df["parent_net_profit"].dropna().tail(5).tolist()
+            profit_values = df[profit_col].dropna().tail(5).tolist()
 
             if len(capex_values) == 0 or len(profit_values) == 0:
                 return {"final_score": None, "reason": "资本开支或净利润数据为空"}
@@ -210,12 +219,12 @@ class BusinessModelAnalyzer(AnalyzerBase):
             if df.empty or "fcf" not in df.columns:
                 return {"final_score": None, "reason": "数据库中缺少自由现金流数据"}
 
-            # 优先用 net_profit，缺失时 fallback 到 parent_net_profit
+            # 优先用扣非净利润，缺失时 fallback 到归母净利润/净利润
             profit_col = None
-            if "net_profit" in df.columns and df["net_profit"].notna().any():
-                profit_col = "net_profit"
-            elif "parent_net_profit" in df.columns and df["parent_net_profit"].notna().any():
-                profit_col = "parent_net_profit"
+            for col in ["deduct_net_profit", "parent_net_profit", "net_profit"]:
+                if col in df.columns and df[col].notna().any():
+                    profit_col = col
+                    break
 
             if profit_col is None:
                 return {"final_score": None, "reason": "数据库中缺少净利润数据"}
@@ -247,7 +256,7 @@ class BusinessModelAnalyzer(AnalyzerBase):
             avg_ratio = sum(yearly_ratios) / len(yearly_ratios)
 
             reason = (
-                f"共 {len(yearly_records)} 年数据，FCF/净利润 总比率={overall_ratio:.2f}，"
+                f"共 {len(yearly_records)} 年数据，FCF/扣非净利润 总比率={overall_ratio:.2f}，"
                 f"各年比率均值={avg_ratio:.2f}，直接得分={final_score}分（满分6分）"
             )
 
@@ -442,10 +451,10 @@ def _calculate_fcf_score(fcf: float, net_profit: float) -> tuple:
 
     Args:
         fcf: 自由现金流（万元）
-        net_profit: 净利润（万元）
+        net_profit: 扣非净利润（万元）
 
     Returns:
-        (基础分, FCF/净利润 ratio)
+        (基础分, FCF/扣非净利润 ratio)
     """
     if net_profit == 0:
         return 0, 0.0

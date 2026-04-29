@@ -55,16 +55,16 @@ class QualityAnalyzer(AnalyzerBase):
         used_profit_metric = None
         if not df.empty:
             profit_series = None
-            if "parent_net_profit" in df.columns:
-                ps = df["parent_net_profit"].dropna().tail(5)
-                if len(ps) >= 2:
-                    profit_series = ps
-                    used_profit_metric = "归属于母公司股东的净利润"
-            if profit_series is None and "deduct_net_profit" in df.columns:
+            if "deduct_net_profit" in df.columns:
                 ps = df["deduct_net_profit"].dropna().tail(5)
                 if len(ps) >= 2:
                     profit_series = ps
                     used_profit_metric = "扣除非经常性损益后的净利润"
+            if profit_series is None and "parent_net_profit" in df.columns:
+                ps = df["parent_net_profit"].dropna().tail(5)
+                if len(ps) >= 2:
+                    profit_series = ps
+                    used_profit_metric = "归属于母公司股东的净利润"
             if profit_series is None and "net_profit" in df.columns:
                 ps = df["net_profit"].dropna().tail(5)
                 if len(ps) >= 2:

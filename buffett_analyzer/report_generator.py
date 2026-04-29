@@ -384,9 +384,9 @@ class ReportGenerator:
             # 营收（亿元）
             rev_vals = [_fmt(r.get("revenue"), 1) for r in recent]
             lines.append(f"| 营收(亿元) | " + " | ".join(rev_vals) + f" | {_trend_amt(recent[0].get('revenue'), recent[-1].get('revenue'))} |")
-            # 净利润（亿元）
-            profit_vals = [_fmt(r.get("net_profit"), 1) for r in recent]
-            lines.append(f"| 净利润(亿元) | " + " | ".join(profit_vals) + f" | {_trend_amt(recent[0].get('net_profit'), recent[-1].get('net_profit'))} |")
+            # 扣非净利润（亿元）
+            profit_vals = [_fmt(r.get("deduct_net_profit"), 1) for r in recent]
+            lines.append(f"| 扣非净利润(亿元) | " + " | ".join(profit_vals) + f" | {_trend_amt(recent[0].get('deduct_net_profit'), recent[-1].get('deduct_net_profit'))} |")
             # 毛利率 (%)
             gm_vals = [_fmt(r.get("gross_margin")) for r in recent]
             lines.append(f"| 毛利率(%) | " + " | ".join(gm_vals) + f" | {_trend_pct(recent[0].get('gross_margin'), recent[-1].get('gross_margin'))} |")
@@ -694,7 +694,7 @@ class ReportGenerator:
             "",
             "### 资本开支（✅ 完全定量）",
             f"- 行业类型：{capex.get('industry_type', 'medium')}",
-            f"- 5年平均CapEx/净利润：{self._safe(capex.get('avg_capex_ratio'), '{}%', '数据暂缺')}",
+            f"- 5年平均CapEx/扣非净利润：{self._safe(capex.get('avg_capex_ratio'), '{}%', '数据暂缺')}",
             f"- 基础分：{capex.get('base_score', 0)}/2",
             f"- 资本开支分析：{capex.get('reason', '数据暂缺')}",
             f"- **最终得分：{capex.get('score', 0)}/2**",
@@ -808,7 +808,11 @@ class ReportGenerator:
             f"- PE历史估值分位（5年）：{self._safe(rel_v.get('pe_percentile_5y'), '{:.1f}%', '数据暂缺')}",
             f"- PB历史估值分位（5年）：{self._safe(rel_v.get('pb_percentile_5y'), '{:.1f}%', '数据暂缺')}",
             f"- PS历史估值分位（5年）：{self._safe(rel_v.get('ps_percentile_5y'), '{:.1f}%', '数据暂缺')}",
-            "- 相对估值深度分析：" + ("当前估值处于历史较低分位，具备相对安全边际。" if rel_v.get('score', 0) >= 2 else "当前估值处于历史中高分位，需关注相对估值风险。"),
+            "- 相对估值深度分析：" + (
+                "⚠️ **警告：历史估值样本不足，分位数据不可靠。** " if rel_v.get('_sample_insufficient') else
+                "当前估值处于历史较低分位，具备相对安全边际。" if rel_v.get('score', 0) >= 2 else
+                "当前估值处于历史中高分分位，需关注相对估值风险。"
+            ),
             f"- **最终得分：{rel_v.get('score', 0)}/4**",
             "",
             "### DCF安全边际（✅ 完全定量）",

@@ -48,17 +48,17 @@ def calculate_gross_margin_stability_base_score(gross_margin_cv: float) -> float
 
     Returns:
         毛利率稳定性基础分（0-2.5分，步长0.5）
-        阈值: 3%/5%/7%/9%/11%，按0.5分递减
+        阈值: 4%/6%/8%/10%/12%，按0.5分递减
     """
-    if gross_margin_cv <= 0.03:
+    if gross_margin_cv <= 0.04:
         return 2.5
-    elif gross_margin_cv <= 0.05:
+    elif gross_margin_cv <= 0.06:
         return 2.0
-    elif gross_margin_cv <= 0.07:
+    elif gross_margin_cv <= 0.08:
         return 1.5
-    elif gross_margin_cv <= 0.09:
+    elif gross_margin_cv <= 0.10:
         return 1.0
-    elif gross_margin_cv <= 0.11:
+    elif gross_margin_cv <= 0.12:
         return 0.5
     else:
         return 0.0
