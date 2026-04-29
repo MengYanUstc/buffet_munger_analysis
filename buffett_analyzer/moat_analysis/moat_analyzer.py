@@ -110,11 +110,13 @@ class MoatAnalyzer(AnalyzerBase):
                 )
                 reason = detail + " " + reason if reason else detail
             # 定价权：优先使用结构化字段公式计算
-            elif key == "pricing_power" and "pricing_ability" in dim:
+            # LLM 有时会返回 pricing_power 而不是 pricing_ability，做兼容
+            elif key == "pricing_power" and ("pricing_ability" in dim or "pricing_power" in dim):
                 score = self._compute_pricing_power_score(dim)
                 reason = dim.get("reason", "")
+                pricing_text = dim.get('pricing_ability', '') or dim.get('pricing_power', '')
                 detail = (
-                    f"【公式计算】提价能力{dim.get('pricing_ability','')}"
+                    f"【公式计算】提价能力{pricing_text}"
                     f" + 产品独特性{dim.get('product_uniqueness','')}"
                     f" + 客户粘性{dim.get('customer_stickiness','')}"
                     f" + 价格敏感度{dim.get('price_sensitivity','')}"
@@ -270,7 +272,9 @@ class MoatAnalyzer(AnalyzerBase):
 - 0分：不可持续
 
 ### 4. 定价权评估（满分 6 分，代码公式计算）
-请对以下四个维度分别评估等级，代码将自动计算最终得分：
+**重要：不要返回 score 和 max_score，只返回四个等级字段和 reason。代码会根据四个等级自动计算最终得分。**
+
+请对以下四个维度分别评估等级：
 
 1. **提价能力**：评估近5年提价次数、提价幅度、提价后销量变化
    - 强（5）：多次提价且销量不受影响甚至增长
@@ -453,7 +457,9 @@ class MoatAnalyzer(AnalyzerBase):
             m = re.search(r'\d+', text)
             return int(m.group(0)) if m else 1
 
-        pricing = _extract_level(str(data.get("pricing_ability", "")))
+        # LLM 有时会返回 pricing_power 而不是 pricing_ability，做兼容
+        pricing_text = data.get("pricing_ability", "") or data.get("pricing_power", "")
+        pricing = _extract_level(str(pricing_text))
         uniqueness = _extract_level(str(data.get("product_uniqueness", "")))
         stickiness = _extract_level(str(data.get("customer_stickiness", "")))
         sensitivity = _extract_level(str(data.get("price_sensitivity", "")))

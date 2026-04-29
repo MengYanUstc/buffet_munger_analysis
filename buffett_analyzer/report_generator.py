@@ -602,9 +602,11 @@ class ReportGenerator:
         ])
         
         # 展示结构化字段（如果 LLM 返回了）
-        if "pricing_ability" in pp:
+        # LLM 有时会返回 pricing_power 而不是 pricing_ability，做兼容
+        if "pricing_ability" in pp or "pricing_power" in pp:
+            pricing_val = pp.get('pricing_ability') or pp.get('pricing_power', '-')
             lines.extend([
-                f"- 提价能力：{pp.get('pricing_ability', '-')}",
+                f"- 提价能力：{pricing_val}",
                 f"- 产品独特性：{pp.get('product_uniqueness', '-')}",
                 f"- 客户粘性：{pp.get('customer_stickiness', '-')}",
                 f"- 价格敏感度：{pp.get('price_sensitivity', '-')}",
