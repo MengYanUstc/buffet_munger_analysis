@@ -434,6 +434,12 @@ class MoatAnalyzer(AnalyzerBase):
         """
         基于 LLM 返回的结构化字段计算定价权得分（满分6分，步长0.5）。
 
+        设计原则：
+          - 提价能力 + 产品独特性是核心权重，决定定价权基本盘
+          - 客户粘性是辅助因素（0~0.5分）
+          - 价格敏感度是微调因素（-0.5~+1.0分）
+          - 强提价 + 稀缺产品 + 一般粘性 + 中敏感度 = 6.0分（可达满分）
+
         字段：
           - pricing_ability: 提价能力等级（如"强(5)"）
           - product_uniqueness: 产品独特性等级（如"稀缺(4)"）
@@ -452,18 +458,22 @@ class MoatAnalyzer(AnalyzerBase):
         stickiness = _extract_level(str(data.get("customer_stickiness", "")))
         sensitivity = _extract_level(str(data.get("price_sensitivity", "")))
 
-        # 1. 提价能力 (1-5) → 0.5~2.5分
-        pricing_score = pricing * 0.5
+        # 1. 提价能力 (1-5) → 0~3.5分（核心权重）
+        pricing_map = {5: 3.5, 4: 2.5, 3: 1.5, 2: 0.5, 1: 0.0}
+        pricing_score = pricing_map.get(pricing, 0.0)
 
-        # 2. 产品独特性 (1-4) → 0~1.5分
-        uniqueness_score = (uniqueness - 1) * 0.5
+        # 2. 产品独特性 (1-4) → 0~2.0分（核心权重）
+        uniqueness_map = {4: 2.0, 3: 1.0, 2: 0.5, 1: 0.0}
+        uniqueness_score = uniqueness_map.get(uniqueness, 0.0)
 
-        # 3. 客户粘性 (1-5) → 0~1.5分
-        stickiness_score = max(0.0, (stickiness - 2) * 0.5)
+        # 3. 客户粘性 (1-5) → 0~0.5分（辅助因素）
+        stickiness_map = {5: 0.5, 4: 0.5, 3: 0.0, 2: 0.0, 1: 0.0}
+        stickiness_score = stickiness_map.get(stickiness, 0.0)
 
-        # 4. 价格敏感度 (1-3，反转) → -0.5~+0.5分
+        # 4. 价格敏感度 (1-3，反转) → -0.5~+1.0分（微调因素）
         # 敏感度越低，定价权越强
-        sensitivity_score = (2 - sensitivity) * 0.5
+        sensitivity_map = {1: 1.0, 2: 0.5, 3: -0.5}
+        sensitivity_score = sensitivity_map.get(sensitivity, 0.0)
 
         total = pricing_score + uniqueness_score + stickiness_score + sensitivity_score
         return round(max(0, min(6, total)) * 2) / 2
