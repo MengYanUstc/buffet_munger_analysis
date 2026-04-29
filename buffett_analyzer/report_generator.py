@@ -599,6 +599,18 @@ class ReportGenerator:
             "",
             "### 定价权评估（⚠️ 定性判断）",
             f"- 定价权等级：{'强' if pp.get('score', 0) >= 4.5 else '中' if pp.get('score', 0) >= 3 else '弱'}",
+        ])
+        
+        # 展示结构化字段（如果 LLM 返回了）
+        if "pricing_ability" in pp:
+            lines.extend([
+                f"- 提价能力：{pp.get('pricing_ability', '-')}",
+                f"- 产品独特性：{pp.get('product_uniqueness', '-')}",
+                f"- 客户粘性：{pp.get('customer_stickiness', '-')}",
+                f"- 价格敏感度：{pp.get('price_sensitivity', '-')}",
+            ])
+        
+        lines.extend([
             f"- 定价权分析：{pp.get('reason', '数据暂缺')}",
             f"- **最终得分：{pp.get('score', 0)}/6**",
             "",

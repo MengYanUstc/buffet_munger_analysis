@@ -109,6 +109,18 @@ class MoatAnalyzer(AnalyzerBase):
                     f" = 得分{score}分。"
                 )
                 reason = detail + " " + reason if reason else detail
+            # 定价权：优先使用结构化字段公式计算
+            elif key == "pricing_power" and "pricing_ability" in dim:
+                score = self._compute_pricing_power_score(dim)
+                reason = dim.get("reason", "")
+                detail = (
+                    f"【公式计算】提价能力{dim.get('pricing_ability','')}"
+                    f" + 产品独特性{dim.get('product_uniqueness','')}"
+                    f" + 客户粘性{dim.get('customer_stickiness','')}"
+                    f" + 价格敏感度{dim.get('price_sensitivity','')}"
+                    f" = 得分{score}分。"
+                )
+                reason = detail + " " + reason if reason else detail
             else:
                 score = dim.get("score", 0.0)
                 reason = dim.get("reason", "")
@@ -118,9 +130,14 @@ class MoatAnalyzer(AnalyzerBase):
                 "max_score": max_s,
                 "reason": reason,
             }
-            # 如果是护城河可持续性，把结构化字段也带过去供报告渲染
+            # 护城河可持续性：把结构化字段也带过去供报告渲染
             if key == "moat_sustainability":
                 for field in ["history_duration_years", "cycle_tests_count", "breakthrough_difficulty", "trend_judgment"]:
+                    if field in dim:
+                        dim_data[field] = dim[field]
+            # 定价权：把结构化字段也带过去供报告渲染
+            if key == "pricing_power":
+                for field in ["pricing_ability", "product_uniqueness", "customer_stickiness", "price_sensitivity"]:
                     if field in dim:
                         dim_data[field] = dim[field]
             dimensions[key] = dim_data
@@ -252,20 +269,33 @@ class MoatAnalyzer(AnalyzerBase):
 - 1-2分：低可持续性
 - 0分：不可持续
 
-### 4. 定价权评估（满分 6 分）
-评估公司自主定价能力：
-- 提价历史（近5年是否多次提价且销量不受影响）
-- 产品差异化程度
-- 客户忠诚度/复购率
-- 供应链议价能力
-- 客户价格敏感度
+### 4. 定价权评估（满分 6 分，代码公式计算）
+请对以下四个维度分别评估等级，代码将自动计算最终得分：
 
-锚点：
-- 6分：强定价权（多次提价销量增长）
-- 4-5分：较强定价权
-- 3分：中等
-- 1-2分：弱定价权
-- 0分：无定价权
+1. **提价能力**：评估近5年提价次数、提价幅度、提价后销量变化
+   - 强（5）：多次提价且销量不受影响甚至增长
+   - 较强（4）：能提价，销量基本稳定
+   - 一般（3）：偶尔提价，销量略有波动
+   - 弱（2）：难以提价，提价后销量下滑
+   - 无法提价（1）：完全无定价权
+
+2. **产品独特性**：产品是否有独特卖点？是否有替代品？差异化程度
+   - 稀缺（4）：独一无二，无替代品
+   - 有差异化（3）：有明显差异化优势
+   - 一般（2）：与竞品差异不大
+   - 同质化严重（1）：完全同质化
+
+3. **客户粘性**：客户复购率、品牌忠诚度、客户流失率
+   - 极高（5）：极高复购率，强品牌忠诚
+   - 高（4）：高复购率
+   - 一般（3）：一般忠诚度
+   - 较低（2）：客户容易流失
+   - 无（1）：完全无粘性
+
+4. **客户对价格敏感度**：提价对市场份额的影响
+   - 高（3）：客户对价格极度敏感，提价即流失
+   - 中（2）：有一定敏感度
+   - 低（1）：客户不敏感，愿意为品牌/品质付溢价
 
 ---
 
@@ -294,9 +324,11 @@ class MoatAnalyzer(AnalyzerBase):
     "reason": "详细说明，引用具体事实"
   }},
   "pricing_power": {{
-    "score": X.X,
-    "max_score": 6.0,
-    "reason": "详细说明，引用具体事实"
+    "pricing_ability": "等级(分值)",
+    "product_uniqueness": "等级(分值)",
+    "customer_stickiness": "等级(分值)",
+    "price_sensitivity": "等级(分值)",
+    "reason": "四个维度支撑评分的原因，不计算最终评分"
   }},
   "qualitative_total": X.X,
   "qualitative_max": 25.0,
@@ -318,7 +350,13 @@ class MoatAnalyzer(AnalyzerBase):
             "industry_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "moat_type": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "moat_sustainability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
-            "pricing_power": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "pricing_power": {
+                "pricing_ability": "无法提价(1)",
+                "product_uniqueness": "同质化严重(1)",
+                "customer_stickiness": "无(1)",
+                "price_sensitivity": "高(3)",
+                "reason": f"LLM 调用失败: {reason}"
+            },
             "qualitative_total": 0.0,
         }
 
@@ -390,6 +428,45 @@ class MoatAnalyzer(AnalyzerBase):
 
         total = base + cycle_adj + diff_adj + trend_adj
         return round(max(0, min(7, total)) * 2) / 2
+
+    @staticmethod
+    def _compute_pricing_power_score(data: dict) -> float:
+        """
+        基于 LLM 返回的结构化字段计算定价权得分（满分6分，步长0.5）。
+
+        字段：
+          - pricing_ability: 提价能力等级（如"强(5)"）
+          - product_uniqueness: 产品独特性等级（如"稀缺(4)"）
+          - customer_stickiness: 客户粘性等级（如"极高(5)"）
+          - price_sensitivity: 价格敏感度等级（如"低(1)"）
+        """
+        def _extract_level(text: str) -> int:
+            m = re.search(r'\((\d+)\)', text)
+            if m:
+                return int(m.group(1))
+            m = re.search(r'\d+', text)
+            return int(m.group(0)) if m else 1
+
+        pricing = _extract_level(str(data.get("pricing_ability", "")))
+        uniqueness = _extract_level(str(data.get("product_uniqueness", "")))
+        stickiness = _extract_level(str(data.get("customer_stickiness", "")))
+        sensitivity = _extract_level(str(data.get("price_sensitivity", "")))
+
+        # 1. 提价能力 (1-5) → 0.5~2.5分
+        pricing_score = pricing * 0.5
+
+        # 2. 产品独特性 (1-4) → 0~1.5分
+        uniqueness_score = (uniqueness - 1) * 0.5
+
+        # 3. 客户粘性 (1-5) → 0~1.5分
+        stickiness_score = max(0.0, (stickiness - 2) * 0.5)
+
+        # 4. 价格敏感度 (1-3，反转) → -0.5~+0.5分
+        # 敏感度越低，定价权越强
+        sensitivity_score = (2 - sensitivity) * 0.5
+
+        total = pricing_score + uniqueness_score + stickiness_score + sensitivity_score
+        return round(max(0, min(6, total)) * 2) / 2
 
     @staticmethod
     def _rating(total: float) -> str:
