@@ -576,7 +576,6 @@ class ReportGenerator:
             "",
             "### 护城河可持续性（⚠️ 定性判断）",
             f"- 综合判断：{'极高' if ms.get('score', 0) >= 6 else '高' if ms.get('score', 0) >= 4.5 else '中等' if ms.get('score', 0) >= 3 else '低'}",
-            f"- 与护城河类型对比：{'加强' if ms.get('score', 0) >= mt.get('score', 0) else '稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '削弱'}",
         ]
         
         # 展示结构化字段（如果 LLM 返回了）
