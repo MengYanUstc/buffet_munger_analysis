@@ -159,6 +159,9 @@ class MoatAnalyzer(AnalyzerBase):
                 for field in ["pricing_ability", "product_uniqueness", "customer_stickiness", "price_sensitivity"]:
                     if field in dim:
                         dim_data[field] = dim[field]
+                # 兼容 LLM 返回 pricing_power 作为提价能力字段名的情况
+                if "pricing_power" in dim and "pricing_ability" not in dim:
+                    dim_data["pricing_ability"] = dim["pricing_power"]
             dimensions[key] = dim_data
             qualitative_total += score
 

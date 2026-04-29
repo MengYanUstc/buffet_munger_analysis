@@ -575,8 +575,8 @@ class ReportGenerator:
             f"- **最终得分：{mt.get('score', 0)}/7**",
             "",
             "### 护城河可持续性（⚠️ 定性判断）",
-            f"- 可持续性等级：{'极高' if ms.get('score', 0) >= 6 else '高' if ms.get('score', 0) >= 4.5 else '中等' if ms.get('score', 0) >= 3 else '低'}",
-            f"- 护城河趋势对比：{'加强' if ms.get('score', 0) >= mt.get('score', 0) else '稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '削弱'}",
+            f"- 综合判断：{'极高' if ms.get('score', 0) >= 6 else '高' if ms.get('score', 0) >= 4.5 else '中等' if ms.get('score', 0) >= 3 else '低'}",
+            f"- 与护城河类型对比：{'加强' if ms.get('score', 0) >= mt.get('score', 0) else '稳定' if abs(ms.get('score', 0) - mt.get('score', 0)) <= 1 else '削弱'}",
         ]
         
         # 展示结构化字段（如果 LLM 返回了）
@@ -589,11 +589,11 @@ class ReportGenerator:
             ])
         
         lines.extend([
-            f"- 可持续性分析：{ms.get('reason', '数据暂缺')}",
+            f"- 各维度分析详情：{ms.get('reason', '数据暂缺')}",
             f"- **最终得分：{ms.get('score', 0)}/7**",
             "",
             "### 行业评分（⚠️ 定性判断）",
-            f"- 行业质量综合判断：{'极高' if iq.get('score', 0) >= 4 else '中高' if iq.get('score', 0) >= 3 else '中等' if iq.get('score', 0) >= 1.5 else '较低'}",
+            f"- 综合判断：{'极高' if iq.get('score', 0) >= 4 else '中高' if iq.get('score', 0) >= 3 else '中等' if iq.get('score', 0) >= 1.5 else '较低'}",
         ])
         
         # 展示结构化字段（如果 LLM 返回了）
@@ -606,11 +606,11 @@ class ReportGenerator:
             ])
         
         lines.extend([
-            f"- 行业深度分析：{iq.get('reason', '数据暂缺')}",
+            f"- 各维度分析详情：{iq.get('reason', '数据暂缺')}",
             f"- **最终得分：{iq.get('score', 0)}/5**",
             "",
             "### 定价权评估（⚠️ 定性判断）",
-            f"- 定价权等级：{'强' if pp.get('score', 0) >= 4.5 else '中' if pp.get('score', 0) >= 3 else '弱'}",
+            f"- 综合判断：{'强' if pp.get('score', 0) >= 4.5 else '中' if pp.get('score', 0) >= 3 else '弱'}",
         ])
         
         # 展示结构化字段（如果 LLM 返回了）
@@ -625,7 +625,7 @@ class ReportGenerator:
             ])
         
         lines.extend([
-            f"- 定价权分析：{pp.get('reason', '数据暂缺')}",
+            f"- 各维度分析详情：{pp.get('reason', '数据暂缺')}",
             f"- **最终得分：{pp.get('score', 0)}/6**",
             "",
             "### 毛利率绝对值评分（✅ 完全定量）",
