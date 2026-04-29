@@ -100,41 +100,15 @@ class MoatAnalyzer(AnalyzerBase):
             if key == "industry_quality" and "industry_concentration" in dim:
                 score = self._compute_industry_quality_score(dim)
                 reason = dim.get("reason", "")
-                detail = (
-                    f"【公式计算】行业集中度{dim.get('industry_concentration','')}"
-                    f" + 进入壁垒{dim.get('entry_barrier','')}"
-                    f" + 需求稳定性{dim.get('demand_stability','')}"
-                    f" + 行业成长性{dim.get('industry_growth','')}"
-                    f" = 得分{score}分。"
-                )
-                reason = detail + " " + reason if reason else detail
             # 护城河可持续性：优先使用结构化字段公式计算
             elif key == "moat_sustainability" and "history_duration_years" in dim:
                 score = self._compute_sustainability_score(dim)
                 reason = dim.get("reason", "")
-                # 在 reason 中补充公式计算细节
-                detail = (
-                    f"【公式计算】历史时长{dim.get('history_duration_years',0)}年"
-                    f" + 周期考验{dim.get('cycle_tests_count',0)}轮"
-                    f" + 突破难度{dim.get('breakthrough_difficulty','')}"
-                    f" + 趋势{dim.get('trend_judgment','')}"
-                    f" = 得分{score}分。"
-                )
-                reason = detail + " " + reason if reason else detail
             # 定价权：优先使用结构化字段公式计算
             # LLM 有时会返回 pricing_power 而不是 pricing_ability，做兼容
             elif key == "pricing_power" and ("pricing_ability" in dim or "pricing_power" in dim):
                 score = self._compute_pricing_power_score(dim)
                 reason = dim.get("reason", "")
-                pricing_text = dim.get('pricing_ability', '') or dim.get('pricing_power', '')
-                detail = (
-                    f"【公式计算】提价能力{pricing_text}"
-                    f" + 产品独特性{dim.get('product_uniqueness','')}"
-                    f" + 客户粘性{dim.get('customer_stickiness','')}"
-                    f" + 价格敏感度{dim.get('price_sensitivity','')}"
-                    f" = 得分{score}分。"
-                )
-                reason = detail + " " + reason if reason else detail
             else:
                 score = dim.get("score", 0.0)
                 reason = dim.get("reason", "")
@@ -144,17 +118,23 @@ class MoatAnalyzer(AnalyzerBase):
                 "max_score": max_s,
                 "reason": reason,
             }
-            # 行业质量：把结构化字段也带过去供报告渲染
+            # 行业质量：把结构化字段和分项得分带过去供报告渲染
             if key == "industry_quality":
                 for field in ["industry_concentration", "entry_barrier", "demand_stability", "industry_growth"]:
                     if field in dim:
                         dim_data[field] = dim[field]
-            # 护城河可持续性：把结构化字段也带过去供报告渲染
+                for score_field in ["_industry_concentration_score", "_entry_barrier_score", "_demand_stability_score", "_industry_growth_score"]:
+                    if score_field in dim:
+                        dim_data[score_field] = dim[score_field]
+            # 护城河可持续性：把结构化字段和分项得分带过去供报告渲染
             if key == "moat_sustainability":
                 for field in ["history_duration_years", "cycle_tests_count", "breakthrough_difficulty", "trend_judgment"]:
                     if field in dim:
                         dim_data[field] = dim[field]
-            # 定价权：把结构化字段也带过去供报告渲染
+                for score_field in ["_history_duration_score", "_cycle_tests_score", "_breakthrough_difficulty_score", "_trend_judgment_score"]:
+                    if score_field in dim:
+                        dim_data[score_field] = dim[score_field]
+            # 定价权：把结构化字段和分项得分带过去供报告渲染
             if key == "pricing_power":
                 for field in ["pricing_ability", "product_uniqueness", "customer_stickiness", "price_sensitivity"]:
                     if field in dim:
@@ -162,6 +142,9 @@ class MoatAnalyzer(AnalyzerBase):
                 # 兼容 LLM 返回 pricing_power 作为提价能力字段名的情况
                 if "pricing_power" in dim and "pricing_ability" not in dim:
                     dim_data["pricing_ability"] = dim["pricing_power"]
+                for score_field in ["_pricing_ability_score", "_product_uniqueness_score", "_customer_stickiness_score", "_price_sensitivity_score"]:
+                    if score_field in dim:
+                        dim_data[score_field] = dim[score_field]
             dimensions[key] = dim_data
             qualitative_total += score
 
@@ -478,6 +461,11 @@ class MoatAnalyzer(AnalyzerBase):
             trend_adj = -0.5
 
         total = base + cycle_adj + diff_adj + trend_adj
+        # 保存各维度得分供报告渲染
+        data["_history_duration_score"] = base
+        data["_cycle_tests_score"] = cycle_adj
+        data["_breakthrough_difficulty_score"] = diff_adj
+        data["_trend_judgment_score"] = trend_adj
         return round(max(0, min(7, total)) * 2) / 2
 
     @staticmethod
@@ -529,6 +517,11 @@ class MoatAnalyzer(AnalyzerBase):
         sensitivity_score = sensitivity_map.get(sensitivity, 0.0)
 
         total = pricing_score + uniqueness_score + stickiness_score + sensitivity_score
+        # 保存各维度得分供报告渲染
+        data["_pricing_ability_score"] = pricing_score
+        data["_product_uniqueness_score"] = uniqueness_score
+        data["_customer_stickiness_score"] = stickiness_score
+        data["_price_sensitivity_score"] = sensitivity_score
         return round(max(0, min(6, total)) * 2) / 2
 
     @staticmethod
@@ -571,6 +564,11 @@ class MoatAnalyzer(AnalyzerBase):
         growth_score = growth_map.get(growth, 0.0)
 
         total = concentration_score + barrier_score + stability_score + growth_score
+        # 保存各维度得分供报告渲染
+        data["_industry_concentration_score"] = concentration_score
+        data["_entry_barrier_score"] = barrier_score
+        data["_demand_stability_score"] = stability_score
+        data["_industry_growth_score"] = growth_score
         return round(max(0, min(5, total)) * 2) / 2
 
     @staticmethod

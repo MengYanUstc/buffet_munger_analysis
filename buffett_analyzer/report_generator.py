@@ -581,10 +581,10 @@ class ReportGenerator:
         # 展示结构化字段（如果 LLM 返回了）
         if "history_duration_years" in ms:
             lines.extend([
-                f"- 历史时长：{ms.get('history_duration_years', '-')}年",
-                f"- 周期考验：{ms.get('cycle_tests_count', '-')}轮",
-                f"- 突破难度：{ms.get('breakthrough_difficulty', '-')}",
-                f"- 趋势判断：{ms.get('trend_judgment', '-')}",
+                f"- 历史时长：{ms.get('history_duration_years', '-')}年（{ms.get('_history_duration_score', 0)}分）",
+                f"- 周期考验：{ms.get('cycle_tests_count', '-')}轮（{ms.get('_cycle_tests_score', 0)}分）",
+                f"- 突破难度：{ms.get('breakthrough_difficulty', '-')}（{ms.get('_breakthrough_difficulty_score', 0)}分）",
+                f"- 趋势判断：{ms.get('trend_judgment', '-')}（{ms.get('_trend_judgment_score', 0)}分）",
             ])
         
         lines.extend([
@@ -598,10 +598,10 @@ class ReportGenerator:
         # 展示结构化字段（如果 LLM 返回了）
         if "industry_concentration" in iq:
             lines.extend([
-                f"- 行业集中度：{iq.get('industry_concentration', '-')}",
-                f"- 进入壁垒：{iq.get('entry_barrier', '-')}",
-                f"- 需求稳定性：{iq.get('demand_stability', '-')}",
-                f"- 行业成长性：{iq.get('industry_growth', '-')}",
+                f"- 行业集中度：{iq.get('industry_concentration', '-')}（{iq.get('_industry_concentration_score', 0)}分）",
+                f"- 进入壁垒：{iq.get('entry_barrier', '-')}（{iq.get('_entry_barrier_score', 0)}分）",
+                f"- 需求稳定性：{iq.get('demand_stability', '-')}（{iq.get('_demand_stability_score', 0)}分）",
+                f"- 行业成长性：{iq.get('industry_growth', '-')}（{iq.get('_industry_growth_score', 0)}分）",
             ])
         
         lines.extend([
@@ -617,10 +617,10 @@ class ReportGenerator:
         if "pricing_ability" in pp or "pricing_power" in pp:
             pricing_val = pp.get('pricing_ability') or pp.get('pricing_power', '-')
             lines.extend([
-                f"- 提价能力：{pricing_val}",
-                f"- 产品独特性：{pp.get('product_uniqueness', '-')}",
-                f"- 客户粘性：{pp.get('customer_stickiness', '-')}",
-                f"- 价格敏感度：{pp.get('price_sensitivity', '-')}",
+                f"- 提价能力：{pricing_val}（{pp.get('_pricing_ability_score', 0)}分）",
+                f"- 产品独特性：{pp.get('product_uniqueness', '-')}（{pp.get('_product_uniqueness_score', 0)}分）",
+                f"- 客户粘性：{pp.get('customer_stickiness', '-')}（{pp.get('_customer_stickiness_score', 0)}分）",
+                f"- 价格敏感度：{pp.get('price_sensitivity', '-')}（{pp.get('_price_sensitivity_score', 0)}分）",
             ])
         
         lines.extend([
