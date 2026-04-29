@@ -551,20 +551,20 @@ class MoatAnalyzer(AnalyzerBase):
         stability = _extract_level(str(data.get("demand_stability", "")))
         growth = _extract_level(str(data.get("industry_growth", "")))
 
-        # 1. 行业集中度 (1-5) → 0~2.0分（核心权重）
-        concentration_map = {5: 2.0, 4: 1.5, 3: 1.0, 2: 0.5, 1: 0.0}
+        # 1. 行业集中度 (1-5) → 0~2.5分（核心权重）
+        concentration_map = {5: 2.5, 4: 2.0, 3: 1.0, 2: 0.5, 1: 0.0}
         concentration_score = concentration_map.get(concentration, 0.0)
 
-        # 2. 进入壁垒 (1-5) → 0~1.5分
-        barrier_map = {5: 1.5, 4: 1.0, 3: 0.5, 2: 0.0, 1: 0.0}
+        # 2. 进入壁垒 (1-5) → 0~2.0分
+        barrier_map = {5: 2.0, 4: 1.0, 3: 0.5, 2: 0.0, 1: 0.0}
         barrier_score = barrier_map.get(barrier, 0.0)
 
-        # 3. 需求稳定性 (1-4) → 0~1.0分
-        stability_map = {4: 1.0, 3: 0.5, 2: 0.0, 1: 0.0}
+        # 3. 需求稳定性 (1-4) → -0.5~+1.0分
+        stability_map = {4: 1.0, 3: 0.5, 2: 0.0, 1: -0.5}
         stability_score = stability_map.get(stability, 0.0)
 
-        # 4. 行业成长性 (1-5) → -0.5~+0.5分（微调）
-        growth_map = {5: 0.5, 4: 0.5, 3: 0.0, 2: 0.0, 1: -0.5}
+        # 4. 行业成长性 (1-5) → -0.5~+1.0分（微调）
+        growth_map = {5: 1.0, 4: 0.5, 3: 0.0, 2: 0.0, 1: -0.5}
         growth_score = growth_map.get(growth, 0.0)
 
         total = concentration_score + barrier_score + stability_score + growth_score
