@@ -96,8 +96,20 @@ class MoatAnalyzer(AnalyzerBase):
         for key, name, max_s in qualitative_dims:
             dim = llm_result.get(key, {})
             
+            # 行业质量：优先使用结构化字段公式计算
+            if key == "industry_quality" and "industry_concentration" in dim:
+                score = self._compute_industry_quality_score(dim)
+                reason = dim.get("reason", "")
+                detail = (
+                    f"【公式计算】行业集中度{dim.get('industry_concentration','')}"
+                    f" + 进入壁垒{dim.get('entry_barrier','')}"
+                    f" + 需求稳定性{dim.get('demand_stability','')}"
+                    f" + 行业成长性{dim.get('industry_growth','')}"
+                    f" = 得分{score}分。"
+                )
+                reason = detail + " " + reason if reason else detail
             # 护城河可持续性：优先使用结构化字段公式计算
-            if key == "moat_sustainability" and "history_duration_years" in dim:
+            elif key == "moat_sustainability" and "history_duration_years" in dim:
                 score = self._compute_sustainability_score(dim)
                 reason = dim.get("reason", "")
                 # 在 reason 中补充公式计算细节
@@ -132,6 +144,11 @@ class MoatAnalyzer(AnalyzerBase):
                 "max_score": max_s,
                 "reason": reason,
             }
+            # 行业质量：把结构化字段也带过去供报告渲染
+            if key == "industry_quality":
+                for field in ["industry_concentration", "entry_barrier", "demand_stability", "industry_growth"]:
+                    if field in dim:
+                        dim_data[field] = dim[field]
             # 护城河可持续性：把结构化字段也带过去供报告渲染
             if key == "moat_sustainability":
                 for field in ["history_duration_years", "cycle_tests_count", "breakthrough_difficulty", "trend_judgment"]:
@@ -225,18 +242,37 @@ class MoatAnalyzer(AnalyzerBase):
 
 ## 评分维度（共25分）
 
-### 1. 行业质量（满分 5 分）
-评估该公司所在行业的整体质量：
-- 行业集中度（CR3/CR5）
-- 行业成长性（近5年CAGR）
-- 进入壁垒（技术/资金/牌照/品牌）
-- 需求稳定性（周期性 vs 刚需）
+### 1. 行业质量（满分 5 分，代码公式计算）
+**重要：不要返回 score 和 max_score，只返回四个等级字段和 reason。代码会根据四个等级自动计算最终得分。**
 
-锚点：
-- 5分：极高质量行业（如高端白酒、创新药）
-- 3-4分：高质量行业
-- 1-2分：中等质量行业
-- 0分：低质量行业（过度竞争、强周期）
+请对以下四个维度分别评估等级：
+
+1. **行业集中度**：CR3/CR5 或头部企业市场份额
+   - 寡头垄断（5）：CR3>70% 或头部一家独大
+   - 高度集中（4）：CR3 50%-70%
+   - 中度集中（3）：CR3 30%-50%
+   - 低度集中（2）：CR3 15%-30%
+   - 完全竞争（1）：CR3<15%，极度分散
+
+2. **进入壁垒**：新进入者面临的障碍
+   - 极高（5）：牌照/特许经营权/强监管，几乎无法进入
+   - 高（4）：需要大量资金、技术积累或品牌沉淀
+   - 中等（3）：有一定门槛但可逾越
+   - 低（2）：门槛很低
+   - 无壁垒（1）：任何人都能进入
+
+3. **需求稳定性**：行业需求受经济周期影响程度
+   - 刚需（4）：无论经济好坏需求都稳定（如医药、食品）
+   - 稳定（3）：需求波动小，与经济弱相关
+   - 波动（2）：需求随经济周期波动
+   - 大幅波动（1）：强周期行业，需求大起大落
+
+4. **行业成长性**：未来3-5年增长前景
+   - 高（5）：CAGR>15%，快速增长
+   - 中（4）：CAGR 8%-15%，稳健增长
+   - 低（3）：CAGR 0%-8%，缓慢增长
+   - 无成长（2）：几乎不增长
+   - 衰退（1）：行业萎缩
 
 ### 2. 护城河类型与强度（满分 7 分）
 识别并评估公司护城河的类型和强度：
@@ -311,9 +347,11 @@ class MoatAnalyzer(AnalyzerBase):
 {{
   "stock_code": "{stock_code}",
   "industry_quality": {{
-    "score": X.X,
-    "max_score": 5.0,
-    "reason": "详细说明，引用具体事实"
+    "industry_concentration": "等级(分值)",
+    "entry_barrier": "等级(分值)",
+    "demand_stability": "等级(分值)",
+    "industry_growth": "等级(分值)",
+    "reason": "四个维度支撑评分的原因，不计算最终评分"
   }},
   "moat_type": {{
     "score": X.X,
@@ -351,7 +389,13 @@ class MoatAnalyzer(AnalyzerBase):
     def _empty_qualitative_result(reason: str) -> Dict[str, Any]:
         """LLM 失败时的空结果。"""
         return {
-            "industry_quality": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
+            "industry_quality": {
+                "industry_concentration": "完全竞争(1)",
+                "entry_barrier": "无壁垒(1)",
+                "demand_stability": "大幅波动(1)",
+                "industry_growth": "衰退(1)",
+                "reason": f"LLM 调用失败: {reason}"
+            },
             "moat_type": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "moat_sustainability": {"score": 0.0, "reason": f"LLM 调用失败: {reason}"},
             "pricing_power": {
@@ -483,6 +527,48 @@ class MoatAnalyzer(AnalyzerBase):
 
         total = pricing_score + uniqueness_score + stickiness_score + sensitivity_score
         return round(max(0, min(6, total)) * 2) / 2
+
+    @staticmethod
+    def _compute_industry_quality_score(data: dict) -> float:
+        """
+        基于 LLM 返回的结构化字段计算行业质量得分（满分5分，步长0.5）。
+
+        字段：
+          - industry_concentration: 行业集中度等级（如"寡头垄断(5)"）
+          - entry_barrier: 进入壁垒等级（如"极高(5)"）
+          - demand_stability: 需求稳定性等级（如"刚需(4)"）
+          - industry_growth: 行业成长性等级（如"高(5)"）
+        """
+        def _extract_level(text: str) -> int:
+            m = re.search(r'\((\d+)\)', text)
+            if m:
+                return int(m.group(1))
+            m = re.search(r'\d+', text)
+            return int(m.group(0)) if m else 1
+
+        concentration = _extract_level(str(data.get("industry_concentration", "")))
+        barrier = _extract_level(str(data.get("entry_barrier", "")))
+        stability = _extract_level(str(data.get("demand_stability", "")))
+        growth = _extract_level(str(data.get("industry_growth", "")))
+
+        # 1. 行业集中度 (1-5) → 0~2.0分（核心权重）
+        concentration_map = {5: 2.0, 4: 1.5, 3: 1.0, 2: 0.5, 1: 0.0}
+        concentration_score = concentration_map.get(concentration, 0.0)
+
+        # 2. 进入壁垒 (1-5) → 0~1.5分
+        barrier_map = {5: 1.5, 4: 1.0, 3: 0.5, 2: 0.0, 1: 0.0}
+        barrier_score = barrier_map.get(barrier, 0.0)
+
+        # 3. 需求稳定性 (1-4) → 0~1.0分
+        stability_map = {4: 1.0, 3: 0.5, 2: 0.0, 1: 0.0}
+        stability_score = stability_map.get(stability, 0.0)
+
+        # 4. 行业成长性 (1-5) → -0.5~+0.5分（微调）
+        growth_map = {5: 0.5, 4: 0.5, 3: 0.0, 2: 0.0, 1: -0.5}
+        growth_score = growth_map.get(growth, 0.0)
+
+        total = concentration_score + barrier_score + stability_score + growth_score
+        return round(max(0, min(5, total)) * 2) / 2
 
     @staticmethod
     def _rating(total: float) -> str:

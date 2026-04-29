@@ -594,6 +594,18 @@ class ReportGenerator:
             "",
             "### 行业评分（⚠️ 定性判断）",
             f"- 行业质量综合判断：{'极高' if iq.get('score', 0) >= 4 else '中高' if iq.get('score', 0) >= 3 else '中等' if iq.get('score', 0) >= 1.5 else '较低'}",
+        ])
+        
+        # 展示结构化字段（如果 LLM 返回了）
+        if "industry_concentration" in iq:
+            lines.extend([
+                f"- 行业集中度：{iq.get('industry_concentration', '-')}",
+                f"- 进入壁垒：{iq.get('entry_barrier', '-')}",
+                f"- 需求稳定性：{iq.get('demand_stability', '-')}",
+                f"- 行业成长性：{iq.get('industry_growth', '-')}",
+            ])
+        
+        lines.extend([
             f"- 行业深度分析：{iq.get('reason', '数据暂缺')}",
             f"- **最终得分：{iq.get('score', 0)}/5**",
             "",
