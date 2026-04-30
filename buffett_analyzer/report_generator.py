@@ -314,6 +314,29 @@ class ReportGenerator:
         ]
         if close_price is not None:
             lines.append(f"- **最新股价**：{close_price}元（{val.get('trade_date', '今日')}）")
+            # 季度股价变化（约60个交易日）
+            try:
+                df_price = self.cache.read_prices(self.stock_code, "stock_daily_prices")
+                if not df_price.empty and len(df_price) >= 60:
+                    df_price = df_price.sort_values("trade_date").reset_index(drop=True)
+                    latest_row = df_price.iloc[-1]
+                    quarter_row = df_price.iloc[-60]
+                    latest_close = float(latest_row.get("close", 0))
+                    quarter_close = float(quarter_row.get("close", 0))
+                    if quarter_close > 0:
+                        change_pct = (latest_close - quarter_close) / quarter_close * 100
+                        sign = "+" if change_pct >= 0 else ""
+                        quarter_date = str(quarter_row.get("trade_date", ""))[:10]
+                        lines.append(
+                            f"- **季度股价变化**：{quarter_close:.2f}({quarter_date}) -> {latest_close:.2f} "
+                            f"({sign}{change_pct:.1f}%)"
+                        )
+                    else:
+                        lines.append("- **季度股价变化**：数据暂缺")
+                else:
+                    lines.append("- **季度股价变化**：数据不足")
+            except Exception:
+                lines.append("- **季度股价变化**：计算异常")
         else:
             lines.append("- **最新股价**：数据暂缺")
 

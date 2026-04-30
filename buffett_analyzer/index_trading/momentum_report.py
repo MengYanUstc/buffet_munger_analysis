@@ -270,8 +270,11 @@ def generate_momentum_report(db_path=None, reports_dir="reports/latest"):
 
     # ========== 高分股票表格 ==========
     stocks = scan_high_score_stocks(reports_dir)
+    watch_codes = {code for code, _ in watchlist}
     stock_data = []
     for s in stocks:
+        if s["code"] in watch_codes:
+            continue
         d = _get_stock_data(cache, s["code"], s["name"], s["score"])
         if d:
             stock_data.append(d)

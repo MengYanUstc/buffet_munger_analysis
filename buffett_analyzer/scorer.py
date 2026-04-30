@@ -108,10 +108,10 @@ def analyze_roe_stability(roes: List[float]) -> Dict[str, Any]:
     last_two = np.mean(roes[-2:])
     trend_diff = float(last_two - first_two)
 
-    if trend_diff >= 3:       trend = "明显上升"
-    elif trend_diff >= 1:     trend = "温和上升"
-    elif trend_diff >= -1:    trend = "基本稳定"
-    elif trend_diff >= -3:    trend = "温和下降"
+    if trend_diff >= 4:       trend = "明显上升"
+    elif trend_diff >= 2:     trend = "温和上升"
+    elif trend_diff >= -2:    trend = "基本稳定"
+    elif trend_diff >= -4:    trend = "温和下降"
     else:                     trend = "明显下降"
 
     # 趋势对称调整规则
