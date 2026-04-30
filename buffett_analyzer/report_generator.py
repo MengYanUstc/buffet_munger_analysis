@@ -950,12 +950,10 @@ class ReportGenerator:
         """从 git tag 获取语义化版本号，无 tag 时回退到 commit hash。"""
         import subprocess
         try:
-            # git describe --tags --always:
-            #   - 有 tag 时: v1.0.0
-            #   - tag 后有 commit: v1.0.0-3-g98f24ae
-            #   - 无 tag 时: 98f24ae (commit hash)
+            # git describe --tags --abbrev=0:
+            #   只返回最近的 tag 名称，不带 commit 后缀
             result = subprocess.run(
-                ["git", "describe", "--tags", "--always"],
+                ["git", "describe", "--tags", "--abbrev=0"],
                 capture_output=True, text=True, check=True,
                 cwd=os.path.dirname(os.path.abspath(__file__))
             )
